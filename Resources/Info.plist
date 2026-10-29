@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.0</string>
+	<string>2.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -32,46 +32,30 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>dev.mochy.app.display</string>
+			<string>dev.mochy.app</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>mochy</string>
 			</array>
 		</dict>
 	</array>
-	<key>NSAppleEventsUsageDescription</key>
-	<string>Mochy controls your music apps, sends replies through Messages, saves notes into Apple Notes, and asks Finder to move files to the Trash.</string>
-	<key>NSAudioCaptureUsageDescription</key>
-	<string>Mochy captures playback audio for visualizer levels, song identification, and per-app volume.</string>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Mochy detects nearby AirPods so it can show a connect island when the case opens.</string>
-	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>Mochy detects nearby AirPods so it can show a connect island when the case opens.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Mochy reads calendars to show your agenda and next event, and saves or deletes personal events only when you confirm an action.</string>
+	<string>Mochy shows today’s events in the notch and alerts you before they start.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Mochy reads calendars to show your agenda and next event.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Mochy uses the camera for the mirror, call previews, and Face Unlock enrollment.</string>
-	<key>NSContactsUsageDescription</key>
-	<string>Mochy shows caller photos on incoming FaceTime calls and finds who to reply to from message notifications.</string>
-	<key>NSDesktopFolderUsageDescription</key>
-	<string>Mochy finds new screenshots saved to your Desktop so it can show them in the notch, and saves your screen recordings there.</string>
-	<key>NSDownloadsFolderUsageDescription</key>
-	<string>Mochy shows download progress and your recent downloads.</string>
-	<key>NSLocationUsageDescription</key>
-	<string>Mochy uses your location for local weather and to show your Wi-Fi network name.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Mochy uses your location for local weather and to show your Wi-Fi network name.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Mochy listens only while you use Cuely, dictation, or song identification. Audio is never saved.</string>
+	<string>Mochy shows today’s events in the notch and alerts you before they start.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
-	<string>Mochy shows and adds reminders from the notch's Reminders tab.</string>
+	<string>Mochy lists reminders due today in its To-Do tab and lets you complete them.</string>
 	<key>NSRemindersUsageDescription</key>
-	<string>Mochy shows and adds reminders from the notch's Reminders tab.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Mochy turns speech into text so Cuely can follow your script and dictation can type for you.</string>
-	<key>NSAppleMusicUsageDescription</key>
-	<string>Mochy shows Now Playing from Apple Music in the notch.</string>
+	<string>Mochy lists reminders due today in its To-Do tab and lets you complete them.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Mochy shows your camera in the Mirror tab so you can check how you look before a call. Nothing is recorded.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Mochy uses your approximate location for the Weather card.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Mochy uses your approximate location for the Weather card.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Mochy can add new screenshots from your Desktop to the Shelf.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Mochy shows download progress in the notch.</string>
 </dict>
 </plist>

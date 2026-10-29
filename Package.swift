@@ -1,6 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+// build.sh is the supported build: it also compiles the Now Playing bridge and assembles Mochy.app.
 let package = Package(
     name: "Mochy",
     platforms: [.macOS(.v14)],
@@ -15,22 +16,10 @@ let package = Package(
                 .swiftLanguageMode(.v5),
             ],
             linkerSettings: [
-                .linkedFramework("AppKit"),
-                .linkedFramework("SwiftUI"),
-                .linkedFramework("EventKit"),
-                .linkedFramework("AVFoundation"),
-                .linkedFramework("AVKit"),
-                .linkedFramework("IOKit"),
-                .linkedFramework("IOBluetooth"),
-                .linkedFramework("CoreLocation"),
-                .linkedFramework("Speech"),
-                .linkedFramework("Vision"),
-                .linkedFramework("ShazamKit"),
-                .linkedFramework("UserNotifications"),
-                .linkedFramework("Network"),
-                .linkedFramework("UniformTypeIdentifiers"),
-                .linkedFramework("ServiceManagement"),
-            ]
+                "AppKit", "SwiftUI", "EventKit", "AVFoundation", "IOKit", "CoreLocation", "Network",
+                "UniformTypeIdentifiers", "Combine", "CoreAudio", "AudioToolbox", "QuickLookThumbnailing",
+                "ServiceManagement", "Carbon", "CoreImage",
+            ].map { .linkedFramework($0) }
         ),
     ]
 )
