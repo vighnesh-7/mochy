@@ -9,6 +9,23 @@ struct ClipItem: Identifiable, Equatable, Codable {
     var sourceApp: String?
     var copiedAt = Date()
     var pinned = false
+
+    var openURL: URL? { ClipLink.url(from: text) }
+}
+
+enum ClipLink {
+    static func url(from text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(where: { $0.isWhitespace }), !trimmed.hasPrefix("/") else { return nil }
+        if trimmed.contains("@"), !trimmed.contains("://") { return nil }
+        if let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme), url.host != nil {
+            return url
+        }
+        let withScheme = trimmed.hasPrefix("www.") ? "https://\(trimmed)" : "https://\(trimmed)"
+        guard let url = URL(string: withScheme), let host = url.host, host.contains(".") else { return nil }
+        let hostOK = host.allSatisfy { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" }
+        return hostOK ? url : nil
+    }
 }
 
 @MainActor
@@ -18,6 +35,8 @@ final class ClipboardService: ObservableObject {
     var limit = 40
     var stripTrackers = false
     var enabled = true
+    var persistAll = true
+    var onInserted: (() -> Void)?
 
     private var changeCount = NSPasteboard.general.changeCount
     private var timer: Timer?
@@ -30,15 +49,20 @@ final class ClipboardService: ObservableObject {
         .init("com.agilebits.onepassword"),
     ]
 
-    private var pinnedURL: URL {
+    private var supportDir: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Mochy", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("pinned-clips.json")
+        return dir
     }
 
+    private var pinnedURL: URL { supportDir.appendingPathComponent("pinned-clips.json") }
+    private var historyURL: URL { supportDir.appendingPathComponent("clipboard-history.json") }
+
     func start() {
-        if let data = try? Data(contentsOf: pinnedURL), let pinned = try? JSONDecoder().decode([ClipItem].self, from: data) {
+        if persistAll, let data = try? Data(contentsOf: historyURL), let stored = try? JSONDecoder().decode([ClipItem].self, from: data) {
+            items = stored
+        } else if let data = try? Data(contentsOf: pinnedURL), let pinned = try? JSONDecoder().decode([ClipItem].self, from: data) {
             items = pinned
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
@@ -47,7 +71,7 @@ final class ClipboardService: ObservableObject {
     }
 
     var filtered: [ClipItem] {
-        let base = items.sorted { ($0.pinned ? 1 : 0, $0.copiedAt) > ($1.pinned ? 1 : 0, $1.copiedAt) }
+        let base = items.sorted { $0.copiedAt > $1.copiedAt }
         guard !query.isEmpty else { return base }
         return base.filter { $0.text.localizedCaseInsensitiveContains(query) }
     }
@@ -63,8 +87,8 @@ final class ClipboardService: ObservableObject {
         if let files = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !files.isEmpty {
             insert(ClipItem(kind: .file, text: files.map(\.path).joined(separator: "\n"), sourceApp: source))
         } else if var text = board.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let isLink = Self.isLink(text)
-            if isLink, stripTrackers {
+            let link = ClipLink.url(from: text) != nil
+            if link, stripTrackers {
                 let cleaned = Self.removeTrackers(text)
                 if cleaned != text {
                     text = cleaned
@@ -73,7 +97,7 @@ final class ClipboardService: ObservableObject {
                     changeCount = board.changeCount
                 }
             }
-            insert(ClipItem(kind: isLink ? .link : .text, text: String(text.prefix(10_000)), sourceApp: source))
+            insert(ClipItem(kind: link ? .link : .text, text: String(text.prefix(10_000)), sourceApp: source))
         }
     }
 
@@ -85,9 +109,15 @@ final class ClipboardService: ObservableObject {
             let drop = Set(unpinned.suffix(unpinned.count - limit).map(\.id))
             items.removeAll { drop.contains($0.id) }
         }
+        persist()
+        onInserted?()
     }
 
-    /// Puts an item back on the pasteboard. It never pastes into another app by itself.
+    func noteExternalChange() {
+        changeCount = NSPasteboard.general.changeCount
+    }
+
+    /// Puts an item back on the pasteboard and refreshes its recency. Pasting into another app is AppModel's job.
     func copy(_ item: ClipItem) {
         let board = NSPasteboard.general
         board.clearContents()
@@ -105,31 +135,33 @@ final class ClipboardService: ObservableObject {
     func togglePin(_ item: ClipItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index].pinned.toggle()
-        savePinned()
+        persist()
     }
 
     func delete(_ item: ClipItem) {
         items.removeAll { $0.id == item.id }
-        savePinned()
+        persist()
     }
 
     func clearHistory() {
         items.removeAll { !$0.pinned }
+        persist()
     }
 
-    private func savePinned() {
+    func persist() {
         let pinned = items.filter(\.pinned)
         if let data = try? JSONEncoder().encode(pinned) { try? data.write(to: pinnedURL, options: .atomic) }
-    }
-
-    private static func isLink(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.contains(" "), let url = URL(string: trimmed), let scheme = url.scheme else { return false }
-        return scheme == "http" || scheme == "https"
+        if persistAll {
+            if let data = try? JSONEncoder().encode(items) { try? data.write(to: historyURL, options: .atomic) }
+        } else {
+            try? FileManager.default.removeItem(at: historyURL)
+        }
     }
 
     private static func removeTrackers(_ text: String) -> String {
-        guard var parts = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return text }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let resolved = ClipLink.url(from: trimmed) else { return text }
+        guard var parts = URLComponents(url: resolved, resolvingAgainstBaseURL: false) else { return text }
         let tracking: Set<String> = ["fbclid", "gclid", "dclid", "msclkid", "igshid", "mc_cid", "mc_eid", "yclid", "_hsenc", "_hsmi", "si"]
         parts.queryItems = parts.queryItems?.filter { item in
             let name = item.name.lowercased()

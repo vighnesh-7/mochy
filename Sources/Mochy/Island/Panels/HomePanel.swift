@@ -33,7 +33,7 @@ private struct HomeCard: View {
         case .controls: ControlsCard(caffeine: model.caffeine, timer: model.timer)
         case .todo: TodoCard(todo: model.todo)
         case .battery: BatteryCard(battery: model.battery)
-        case .system: SystemCard(stats: model.stats)
+        case .system: BatteryCard(battery: model.battery)
         case .weather: WeatherCard(weather: model.weather)
         }
     }
@@ -359,29 +359,6 @@ struct BatteryCard: View {
     }
 }
 
-struct SystemCard: View {
-    @ObservedObject var stats: SystemStatsService
-
-    var body: some View {
-        IslandCard {
-            VStack(alignment: .leading, spacing: 6) {
-                SectionLabel(text: "CPU")
-                Text("\(Int(stats.sample.cpu * 100))%").font(Island.numerals(24, weight: .bold)).foregroundStyle(Island.primary)
-                Sparkline(values: stats.cpuHistory, tint: Island.positive).frame(maxHeight: .infinity)
-                HStack {
-                    Text("Memory").foregroundStyle(Island.tertiary)
-                    Spacer()
-                    Text("\(Int(stats.sample.memoryFraction * 100))%").foregroundStyle(Island.secondary)
-                }
-                .font(Island.numerals(10.5, weight: .medium))
-                Meter(value: stats.sample.memoryFraction, tint: Island.info)
-            }
-        }
-        .onAppear { stats.beginWatching() }
-        .onDisappear { stats.endWatching() }
-    }
-}
-
 struct WeatherCard: View {
     @ObservedObject var weather: WeatherService
 
@@ -401,35 +378,6 @@ struct WeatherCard: View {
             }
         }
         .onAppear { weather.refreshIfStale() }
-    }
-}
-
-struct Sparkline: View {
-    let values: [Double]
-    let tint: Color
-
-    var body: some View {
-        GeometryReader { proxy in
-            let points = values.isEmpty ? [0, 0] : (values.count == 1 ? values + values : values)
-            let step = proxy.size.width / CGFloat(points.count - 1)
-            let line = Path { path in
-                for (index, value) in points.enumerated() {
-                    let point = CGPoint(x: CGFloat(index) * step, y: proxy.size.height * (1 - CGFloat(min(max(value, 0), 1))))
-                    index == 0 ? path.move(to: point) : path.addLine(to: point)
-                }
-            }
-            ZStack {
-                Path { path in
-                    path.addPath(line)
-                    path.addLine(to: CGPoint(x: proxy.size.width, y: proxy.size.height))
-                    path.addLine(to: CGPoint(x: 0, y: proxy.size.height))
-                    path.closeSubpath()
-                }
-                .fill(LinearGradient(colors: [tint.opacity(0.35), tint.opacity(0)], startPoint: .top, endPoint: .bottom))
-                line.stroke(tint, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-            }
-        }
-        .accessibilityHidden(true)
     }
 }
 

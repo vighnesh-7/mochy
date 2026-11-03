@@ -67,6 +67,7 @@ final class ShelfService: ObservableObject {
 
     func open(_ item: ShelfItem) { NSWorkspace.shared.open(item.url) }
     func reveal(_ item: ShelfItem) { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+    func report(_ message: String) { lastError = message }
 
     var canAirDrop: Bool {
         NSSharingService(named: .sendViaAirDrop)?.canPerform(withItems: items.map(\.url)) ?? false
@@ -92,7 +93,7 @@ final class ShelfService: ObservableObject {
     private func makeThumbnail(_ item: ShelfItem) {
         guard thumbnails[item.id] == nil else { return }
         thumbnails[item.id] = NSWorkspace.shared.icon(forFile: item.url.path)
-        let request = QLThumbnailGenerator.Request(fileAt: item.url, size: CGSize(width: 96, height: 96), scale: NSScreen.main?.backingScaleFactor ?? 2, representationTypes: .thumbnail)
+        let request = QLThumbnailGenerator.Request(fileAt: item.url, size: CGSize(width: 224, height: 224), scale: NSScreen.main?.backingScaleFactor ?? 2, representationTypes: .thumbnail)
         QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] representation, _ in
             guard let image = representation?.nsImage else { return }
             Task { @MainActor in self?.thumbnails[item.id] = image }

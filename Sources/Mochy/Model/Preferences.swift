@@ -1,9 +1,11 @@
+import AppKit
 import Carbon.HIToolbox
+import CoreGraphics
 import Foundation
 import SwiftUI
 
 enum TabID: String, CaseIterable, Identifiable, Codable {
-    case home, shelf, clipboard, todo, timer, calendar, stats
+    case home, nowPlaying, shelf, clipboard, todo, timer, calendar, stats
     case notes, calculator, quickSearch, launcher, emoji, mirror
 
     var id: String { rawValue }
@@ -11,6 +13,7 @@ enum TabID: String, CaseIterable, Identifiable, Codable {
     var title: String {
         switch self {
         case .home: "Home"
+        case .nowPlaying: "Now Playing"
         case .shelf: "Shelf"
         case .clipboard: "Clipboard"
         case .todo: "To-Do"
@@ -29,6 +32,7 @@ enum TabID: String, CaseIterable, Identifiable, Codable {
     var symbol: String {
         switch self {
         case .home: "house.fill"
+        case .nowPlaying: "play.circle.fill"
         case .shelf: "tray.full.fill"
         case .clipboard: "doc.on.clipboard.fill"
         case .todo: "checklist"
@@ -47,12 +51,13 @@ enum TabID: String, CaseIterable, Identifiable, Codable {
     var summary: String {
         switch self {
         case .home: "Now playing, today’s events and quick controls."
+        case .nowPlaying: "The track or video playing on this Mac."
         case .shelf: "Park files in the notch, drag them out, or AirDrop them."
-        case .clipboard: "Recent copies. Click one to copy it again."
+        case .clipboard: "Recent copies. Keys 1–9 paste the newest snippets."
         case .todo: "A short list for today."
         case .timer: "Pomodoro focus sessions, countdowns and a stopwatch."
-        case .calendar: "Today’s agenda with Join buttons for video calls."
-        case .stats: "CPU, memory, network, storage and battery vitals."
+        case .calendar: "The month, with events for the day you select."
+        case .stats: "Battery details."
         case .notes: "A scratchpad that saves as you type."
         case .calculator: "Type a sum and press Return."
         case .quickSearch: "Search the web from the notch."
@@ -62,7 +67,7 @@ enum TabID: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    static let defaultOrder: [TabID] = [.home, .shelf, .clipboard, .todo, .timer, .calendar, .stats]
+    static let defaultOrder: [TabID] = [.home, .nowPlaying, .shelf, .clipboard, .todo, .timer, .calendar]
 }
 
 enum HomeCardID: String, CaseIterable, Identifiable, Codable {
@@ -218,18 +223,110 @@ enum PanelSize: String, CaseIterable, Identifiable, Codable {
     var title: String { rawValue.capitalized }
     var width: CGFloat {
         switch self {
-        case .compact: 580
-        case .regular: 660
-        case .large: 760
+        case .compact: 620
+        case .regular: 700
+        case .large: 800
         }
     }
 
     var contentHeight: CGFloat {
         switch self {
-        case .compact: 150
-        case .regular: 176
-        case .large: 210
+        case .compact: 168
+        case .regular: 188
+        case .large: 220
         }
+    }
+}
+
+enum ClipboardSound: String, CaseIterable, Identifiable, Codable {
+    case none, pop, click, bubble
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .none: "None"
+        case .pop: "Pop"
+        case .click: "Click"
+        case .bubble: "Bubble"
+        }
+    }
+}
+
+enum CursorStyle: String, CaseIterable, Identifiable, Codable {
+    case system, arrow, dot, crosshair, beam
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .system: "Mac Cursor"
+        case .arrow: "Arrow"
+        case .dot: "Dot"
+        case .crosshair: "Crosshair"
+        case .beam: "I-Beam"
+        }
+    }
+}
+
+enum TranslucencyProfile: String, CaseIterable, Identifiable, Codable {
+    case graphite, carbon, satin
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .graphite: "Graphite"
+        case .carbon: "Carbon"
+        case .satin: "Satin"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .graphite: "Dense charcoal glass"
+        case .carbon: "Near-black, like the camera housing"
+        case .satin: "Soft warm dark"
+        }
+    }
+
+    var fill: Color {
+        switch self {
+        case .graphite: Color(white: 0.14).opacity(0.94)
+        case .carbon: Color.black.opacity(0.96)
+        case .satin: Color(red: 0.13, green: 0.11, blue: 0.12).opacity(0.9)
+        }
+    }
+
+    var material: NSVisualEffectView.Material {
+        switch self {
+        case .graphite: .sidebar
+        case .carbon: .hudWindow
+        case .satin: .menu
+        }
+    }
+}
+
+enum IslandScreen: String, CaseIterable, Identifiable, Codable {
+    case all, builtIn, main, external
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .builtIn: "Built-in"
+        case .main: "Main"
+        case .external: "External"
+        }
+    }
+
+    func matches(_ screen: NSScreen) -> Bool {
+        switch self {
+        case .all: return true
+        case .main: return screen == NSScreen.main
+        case .builtIn: return screen.isBuiltIn
+        case .external: return !screen.isBuiltIn
+        }
+    }
+}
+
+extension NSScreen {
+    var isBuiltIn: Bool {
+        let number = deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+        return CGDisplayIsBuiltin(number) != 0
     }
 }
 
@@ -250,27 +347,49 @@ enum CaffeineDuration: Int, CaseIterable, Identifiable, Codable {
 struct Preferences: Codable, Equatable {
     // General
     var launchAtLogin = false
-    var showMenuBarIcon = true
+    var showMenuBarIcon = false
+    var menuBarClipboard = false
+    var menuBarTodo = false
     var followPointerDisplay = false
 
     // Island
     var openOnHover = true
     var hoverDelay: Double = 0.15
     var closeOnMouseExit = true
-    var closeDelay: Double = 0.4
+    var closeDelay: Double = 0.9
+    var idleTimeout: Double = 0
+    var openOnCurrentActivity = false
+    var defaultTab: TabID = .home
+    var islandScreen: IslandScreen = .all
     var hapticFeedback = true
+    var hapticOnClick = true
     var panelSize: PanelSize = .regular
     var rememberLastTab = true
     var tabOrder: [TabID] = TabID.defaultOrder
+    /// 1 keeps the closed pill on the camera housing; above 1 grows it.
+    var closedPillScale: Double = 1
+    /// Extra height on the live-activity pill so meters and percents aren’t clipped.
+    var activityHeightExtra: Double = 4
+    /// Extra width on each live-activity ear.
+    var activityWidthExtra: Double = 12
+    var glassSurface = false
+    var translucency: TranslucencyProfile = .carbon
+    var hideIslandFromScreenshots = false
+    /// Spacing between expanded-island section icons, in points.
+    var tabIconGap: Double = 2
 
     // Live activities
     var mediaActivity = true
+    var alwaysShowNowPlaying = false
     var timerActivity = true
     var downloadActivity = true
     var caffeineActivity = true
     var chargingAlerts = true
     var lowBatteryAlert = true
-    var volumeActivity = false
+    var volumeActivity = true
+    var brightnessActivity = true
+    /// Set once so earlier installs, which left the volume HUD off, pick up keyboard HUDs.
+    var hudControlsEnabled = true
     var trackChangePeek = true
     var eventAlerts = true
     var eventAlertMinutes = 5
@@ -281,10 +400,20 @@ struct Preferences: Codable, Equatable {
     // Now playing
     var artworkTint = true
     var keepPausedMediaSeconds: Double = 20
+    var mediaBlacklist: [String] = ["instagram.com", "instagram"]
 
     // Calendar
     var showAllDayEvents = true
-    var showRemindersInTodo = true
+    var showRemindersInTodo = false
+    var dockTodo = false
+    var dockClipboard = false
+    var dockAudio = true
+    /// Positive X moves the right-hand chips (To-Do / Clipboard) right and the left-hand chip left.
+    var dockOffsetX: Double = 0
+    /// Points to drop the chips below the Dock baseline.
+    var dockOffsetY: Double = 0
+    /// 1 is the default chip size; lower values shrink the dock shortcuts.
+    var dockIconScale: Double = 1
 
     // Shelf
     var openShelfOnFileDrag = true
@@ -295,7 +424,11 @@ struct Preferences: Codable, Equatable {
     // Clipboard
     var clipboardHistory = true
     var clipboardLimit = 40
+    var clipboardPersist = true
     var stripLinkTrackers = false
+    var clipboardSound: ClipboardSound = .pop
+
+    var cursorStyle: CursorStyle = .system
 
     // Pomodoro
     var focusMinutes: Double = 25
@@ -320,6 +453,8 @@ struct Preferences: Codable, Equatable {
     var apiToken = Preferences.newToken()
 
     static let storageKey = "mochy.preferences.v3"
+    /// Set by decoding when an older install still had the volume HUD turned off.
+    static var needsHUDSave = false
 
     static func newToken() -> String {
         String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24)).lowercased()
@@ -350,37 +485,71 @@ extension Preferences {
         }
         take(.launchAtLogin, &launchAtLogin)
         take(.showMenuBarIcon, &showMenuBarIcon)
+        take(.menuBarClipboard, &menuBarClipboard)
+        take(.menuBarTodo, &menuBarTodo)
         take(.followPointerDisplay, &followPointerDisplay)
         take(.openOnHover, &openOnHover)
         take(.hoverDelay, &hoverDelay)
         take(.closeOnMouseExit, &closeOnMouseExit)
         take(.closeDelay, &closeDelay)
+        take(.idleTimeout, &idleTimeout)
+        take(.openOnCurrentActivity, &openOnCurrentActivity)
+        take(.defaultTab, &defaultTab)
+        take(.islandScreen, &islandScreen)
         take(.hapticFeedback, &hapticFeedback)
+        take(.hapticOnClick, &hapticOnClick)
         take(.panelSize, &panelSize)
         take(.rememberLastTab, &rememberLastTab)
         take(.tabOrder, &tabOrder)
+        take(.closedPillScale, &closedPillScale)
+        take(.activityHeightExtra, &activityHeightExtra)
+        take(.activityWidthExtra, &activityWidthExtra)
+        take(.glassSurface, &glassSurface)
+        take(.translucency, &translucency)
+        take(.hideIslandFromScreenshots, &hideIslandFromScreenshots)
+        take(.tabIconGap, &tabIconGap)
         take(.mediaActivity, &mediaActivity)
+        take(.alwaysShowNowPlaying, &alwaysShowNowPlaying)
         take(.timerActivity, &timerActivity)
         take(.downloadActivity, &downloadActivity)
         take(.caffeineActivity, &caffeineActivity)
         take(.chargingAlerts, &chargingAlerts)
         take(.lowBatteryAlert, &lowBatteryAlert)
         take(.volumeActivity, &volumeActivity)
+        take(.brightnessActivity, &brightnessActivity)
+        if c.contains(.hudControlsEnabled) {
+            take(.hudControlsEnabled, &hudControlsEnabled)
+        } else {
+            hudControlsEnabled = false
+        }
         take(.trackChangePeek, &trackChangePeek)
         take(.eventAlerts, &eventAlerts)
         take(.eventAlertMinutes, &eventAlertMinutes)
         take(.homeCards, &homeCards)
         take(.artworkTint, &artworkTint)
         take(.keepPausedMediaSeconds, &keepPausedMediaSeconds)
+        take(.mediaBlacklist, &mediaBlacklist)
+        mediaBlacklist = mediaBlacklist.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         take(.showAllDayEvents, &showAllDayEvents)
         take(.showRemindersInTodo, &showRemindersInTodo)
+        take(.dockTodo, &dockTodo)
+        take(.dockClipboard, &dockClipboard)
+        take(.dockAudio, &dockAudio)
+        take(.dockOffsetX, &dockOffsetX)
+        take(.dockOffsetY, &dockOffsetY)
+        if dockOffsetY < 0 { dockOffsetY = 0 }
+        take(.dockIconScale, &dockIconScale)
+        dockIconScale = min(max(dockIconScale, 0.5), 1)
         take(.openShelfOnFileDrag, &openShelfOnFileDrag)
         take(.removeAfterAirDrop, &removeAfterAirDrop)
         take(.screenshotsToShelf, &screenshotsToShelf)
         take(.downloadsToShelf, &downloadsToShelf)
         take(.clipboardHistory, &clipboardHistory)
         take(.clipboardLimit, &clipboardLimit)
+        take(.clipboardPersist, &clipboardPersist)
         take(.stripLinkTrackers, &stripLinkTrackers)
+        take(.clipboardSound, &clipboardSound)
+        take(.cursorStyle, &cursorStyle)
         take(.focusMinutes, &focusMinutes)
         take(.shortBreakMinutes, &shortBreakMinutes)
         take(.longBreakMinutes, &longBreakMinutes)
@@ -393,5 +562,16 @@ extension Preferences {
         take(.apiEnabled, &apiEnabled)
         take(.apiPort, &apiPort)
         take(.apiToken, &apiToken)
+        if !hudControlsEnabled {
+            volumeActivity = true
+            brightnessActivity = true
+            hudControlsEnabled = true
+            Preferences.needsHUDSave = true
+        }
+        tabOrder = tabOrder.filter { $0 != .stats }
+        if tabOrder.isEmpty { tabOrder = TabID.defaultOrder }
+        if defaultTab == .stats { defaultTab = .home }
+        homeCards = homeCards.filter { $0 != .system }
+        if homeCards.isEmpty { homeCards = [.nowPlaying, .calendar, .controls] }
     }
 }

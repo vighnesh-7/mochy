@@ -16,7 +16,7 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
 @MainActor
 final class IslandController {
     /// Large enough for the biggest panel plus its shadow; everything outside the island passes clicks through.
-    private static let canvas = CGSize(width: 900, height: 360)
+    private static let canvas = CGSize(width: 1100, height: 420)
 
     private let model: AppModel
     private let panel: IslandPanel
@@ -24,6 +24,7 @@ final class IslandController {
     private var bag = Set<AnyCancellable>()
     private var openWork: DispatchWorkItem?
     private var closeWork: DispatchWorkItem?
+    private var idleWork: DispatchWorkItem?
     /// Hover-close only applies once the pointer has been inside the open island,
     /// so an island opened from the keyboard doesn't close under a pointer that never arrived.
     private var pointerVisited = false
@@ -48,6 +49,7 @@ final class IslandController {
         panel.becomesKeyOnlyIfNeeded = true
         panel.animationBehavior = .none
         panel.ignoresMouseEvents = true
+        applySharing()
 
         let host = FirstMouseHostingView(rootView: IslandRoot().environmentObject(model))
         host.sizingOptions = []
@@ -80,11 +82,14 @@ final class IslandController {
     }
 
     private func chooseScreen() -> NSScreen {
-        let screens = NSScreen.screens
-        if model.prefs.followPointerDisplay, let pointer = screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) {
+        let screens = NSScreen.screens.filter { model.prefs.islandScreen.matches($0) }
+        let pool = screens.isEmpty ? NSScreen.screens : screens
+        if model.prefs.followPointerDisplay || model.prefs.islandScreen == .all,
+           let pointer = pool.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) })
+        {
             return pointer
         }
-        return screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? screens[0]
+        return pool.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? pool[0]
     }
 
     /// The island's current target rectangle in screen coordinates, including the concave shoulders.
@@ -123,17 +128,40 @@ final class IslandController {
             MainActor.assumeIsolated { self?.clickedOutside() }
         }) { monitors.append(down) }
         if let localDown = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in
-            MainActor.assumeIsolated { self?.dragChangeCount = NSPasteboard(name: .drag).changeCount }
+            MainActor.assumeIsolated {
+                self?.dragChangeCount = NSPasteboard(name: .drag).changeCount
+                if self?.model.isExpanded == true { self?.focusIsland() }
+            }
             return event
         }) { monitors.append(localDown) }
+
+        if let scroll = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] event in
+            let dy = event.scrollingDeltaY
+            let dx = event.scrollingDeltaX
+            let handled = MainActor.assumeIsolated { self?.swipeIsland(deltaY: dy, deltaX: dx) ?? false }
+            return handled ? nil : event
+        }) { monitors.append(scroll) }
+        if let globalScroll = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] event in
+            let dy = event.scrollingDeltaY
+            let dx = event.scrollingDeltaX
+            MainActor.assumeIsolated { _ = self?.swipeIsland(deltaY: dy, deltaX: dx) }
+        }) { monitors.append(globalScroll) }
 
         if let up = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: { [weak self] _ in
             MainActor.assumeIsolated { self?.dragEnded() }
         }) { monitors.append(up) }
 
         if let keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            guard event.keyCode == 53, let number = event.window?.windowNumber else { return event }
-            let handled = MainActor.assumeIsolated { self?.escapePressed(inWindow: number) ?? false }
+            guard let self else { return event }
+            let code = event.keyCode
+            let number = event.window?.windowNumber
+            let characters = event.charactersIgnoringModifiers ?? ""
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let handled = MainActor.assumeIsolated {
+                if code == 53, let number, self.escapePressed(inWindow: number) { return true }
+                if self.commandKey(code: code, characters: characters, flags: flags, window: number) { return true }
+                return self.snippetKey(characters, flags: flags, window: number)
+            }
             return handled ? nil : event
         }) { monitors.append(keys) }
     }
@@ -142,6 +170,70 @@ final class IslandController {
         guard number == panel.windowNumber else { return false }
         if model.paletteOpen { model.paletteOpen = false } else { model.collapse() }
         return true
+    }
+
+    /// Two-finger swipe over the island: up collapses, down expands.
+    private func swipeIsland(deltaY: CGFloat, deltaX: CGFloat) -> Bool {
+        guard hoverRect.contains(NSEvent.mouseLocation) else { return false }
+        guard abs(deltaY) > 10, abs(deltaY) > abs(deltaX) * 1.2 else { return false }
+        if deltaY < 0 {
+            guard model.isExpanded, !model.pinned else { return false }
+            model.collapse()
+            if model.prefs.hapticFeedback { hapticHover() }
+            return true
+        }
+        guard !model.isExpanded else { return false }
+        model.expand()
+        if model.prefs.hapticFeedback { hapticHover() }
+        return true
+    }
+
+    private func commandKey(code: UInt16, characters: String, flags: NSEvent.ModifierFlags, window: Int?) -> Bool {
+        guard window == panel.windowNumber, panel.isKeyWindow else { return false }
+        let command = flags.contains(.command)
+        let control = flags.contains(.control)
+        guard command || control else { return false }
+        let letter = characters.lowercased()
+        if letter == "w" || code == 13 {
+            model.collapse()
+            return true
+        }
+        if letter == "q" || code == 12 {
+            NSApp.terminate(nil)
+            return true
+        }
+        if command, code == 43 || letter == "," {
+            model.collapse()
+            model.openSettings?()
+            return true
+        }
+        return false
+    }
+
+    private func focusIsland() {
+        rememberFrontApp()
+        panel.makeKey()
+    }
+
+    func applySharing() {
+        panel.sharingType = model.prefs.hideIslandFromScreenshots ? .none : .readWrite
+    }
+
+    /// Keys 1–9 paste clipboard snippets while that tab is open. 1 is the newest copy.
+    private func snippetKey(_ characters: String, flags: NSEvent.ModifierFlags, window: Int?) -> Bool {
+        guard window == panel.windowNumber else { return false }
+        guard model.isExpanded, model.tab == .clipboard, !model.paletteOpen else { return false }
+        guard flags.isDisjoint(with: [.command, .control, .option]) else { return false }
+        guard characters.count == 1, let slot = Int(characters), (1 ... 9).contains(slot) else { return false }
+        model.pasteClipboard(slot: slot)
+        return true
+    }
+
+    private func rememberFrontApp() {
+        guard let front = NSWorkspace.shared.frontmostApplication,
+              front.bundleIdentifier != Bundle.main.bundleIdentifier
+        else { return }
+        model.previousFrontApp = front
     }
 
     private func pointerMoved(dragging: Bool) {
@@ -156,6 +248,7 @@ final class IslandController {
             cancelClose()
             if model.isExpanded {
                 pointerVisited = true
+                resetIdleTimer()
             } else if model.prefs.openOnHover, !dragging, openWork == nil {
                 let work = DispatchWorkItem { [weak self] in
                     guard let self else { return }
@@ -163,9 +256,7 @@ final class IslandController {
                     guard self.hoverRect.contains(NSEvent.mouseLocation), !self.model.isExpanded else { return }
                     self.pointerVisited = true
                     self.model.expand()
-                    if self.model.prefs.hapticFeedback {
-                        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-                    }
+                    if self.model.prefs.hapticFeedback { hapticHover() }
                 }
                 openWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + model.prefs.hoverDelay, execute: work)
@@ -192,6 +283,19 @@ final class IslandController {
     private func cancelClose() {
         closeWork?.cancel()
         closeWork = nil
+    }
+
+    private func resetIdleTimer() {
+        idleWork?.cancel()
+        idleWork = nil
+        let timeout = model.prefs.idleTimeout
+        guard timeout > 0, model.isExpanded, !model.pinned else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.model.isExpanded, !self.model.pinned else { return }
+            self.model.collapse()
+        }
+        idleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
     }
 
     /// Clicks in other apps arrive here; a click outside the open island closes it unless it's pinned.
@@ -234,6 +338,7 @@ final class IslandController {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self, self.model.isExpanded else { return }
+                self.rememberFrontApp()
                 self.panel.makeKey()
             }
             .store(in: &bag)
@@ -243,12 +348,29 @@ final class IslandController {
             .sink { [weak self] in self?.updateClickThrough(NSEvent.mouseLocation) }
             .store(in: &bag)
 
-        model.$prefs
-            .map(\.followPointerDisplay)
+        model.$tab
             .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] tab in
+                guard let self, self.model.isExpanded, tab == .clipboard else { return }
+                self.rememberFrontApp()
+                self.panel.makeKey()
+            }
+            .store(in: &bag)
+
+        model.$prefs
+            .map { ($0.followPointerDisplay, $0.islandScreen) }
+            .removeDuplicates { $0 == $1 }
             .dropFirst()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.place() }
+            .store(in: &bag)
+
+        model.$prefs
+            .map(\.hideIslandFromScreenshots)
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.applySharing() }
             .store(in: &bag)
 
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
@@ -262,10 +384,16 @@ final class IslandController {
         openWork?.cancel()
         openWork = nil
         if expanded {
-            if model.wantsKeyboard { panel.makeKey() }
+            if model.wantsKeyboard || model.tab == .clipboard {
+                rememberFrontApp()
+                panel.makeKey()
+            }
             if hoverRect.contains(NSEvent.mouseLocation) { pointerVisited = true }
+            resetIdleTimer()
         } else {
             pointerVisited = false
+            idleWork?.cancel()
+            idleWork = nil
             if panel.isKeyWindow {
                 // Hand the keyboard back to whatever app was in front without activating Mochy.
                 panel.orderOut(nil)

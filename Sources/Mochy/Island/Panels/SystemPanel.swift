@@ -1,79 +1,13 @@
 import SwiftUI
 
 struct SystemPanel: View {
-    @ObservedObject var stats: SystemStatsService
     @ObservedObject var battery: BatteryMonitor
 
     var body: some View {
-        let sample = stats.sample
         HStack(spacing: 10) {
-            Grid(horizontalSpacing: 10, verticalSpacing: 10) {
-                GridRow {
-                    StatTile(title: "CPU", value: "\(Int(sample.cpu * 100))%") {
-                        Sparkline(values: stats.cpuHistory, tint: cpuTint(sample.cpu))
-                    }
-                    StatTile(title: "Memory", value: "\(Int(sample.memoryFraction * 100))%") {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Spacer(minLength: 0)
-                            Meter(value: sample.memoryFraction, tint: Island.info, height: 5)
-                            Text("\(ByteFormat.memory(sample.memoryUsed)) of \(ByteFormat.memory(sample.memoryTotal))")
-                                .font(Island.numerals(10.5, weight: .medium)).foregroundStyle(Island.tertiary)
-                        }
-                    }
-                }
-                GridRow {
-                    StatTile(title: "Network", value: nil) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Label(ByteFormat.rate(sample.networkIn), systemImage: "arrow.down")
-                            Label(ByteFormat.rate(sample.networkOut), systemImage: "arrow.up")
-                        }
-                        .font(Island.numerals(11.5, weight: .semibold))
-                        .foregroundStyle(Island.primary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    }
-                    StatTile(title: "Storage", value: nil) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Spacer(minLength: 0)
-                            Meter(value: sample.diskUsedFraction, tint: Island.focus, height: 5)
-                            Text("\(ByteFormat.storage(sample.diskFree)) free")
-                                .font(Island.numerals(10.5, weight: .medium)).foregroundStyle(Island.tertiary)
-                        }
-                    }
-                }
-            }
-            BatteryVitalsTile(vitals: battery.vitals).frame(width: 210)
+            BatteryVitalsTile(vitals: battery.vitals)
         }
-        .onAppear {
-            stats.beginWatching()
-            battery.refresh()
-        }
-        .onDisappear { stats.endWatching() }
-    }
-
-    private func cpuTint(_ value: Double) -> Color {
-        value > 0.85 ? Island.warning : (value > 0.6 ? Island.focus : Island.positive)
-    }
-}
-
-private struct StatTile<Content: View>: View {
-    let title: String
-    let value: String?
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        IslandCard(padding: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline) {
-                    SectionLabel(text: title)
-                    Spacer()
-                    if let value {
-                        Text(value).font(Island.numerals(15, weight: .bold)).foregroundStyle(Island.primary)
-                    }
-                }
-                content.frame(maxHeight: .infinity)
-            }
-        }
-        .accessibilityElement(children: .combine)
+        .onAppear { battery.refresh() }
     }
 }
 

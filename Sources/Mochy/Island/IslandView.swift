@@ -20,12 +20,22 @@ struct IslandRoot: View {
             }
             .frame(width: size.width, height: size.height, alignment: .top)
             .padding(.horizontal, radii.top)
-            .background(shape.fill(Island.surface))
+            .background {
+                if model.prefs.glassSurface {
+                    VisualEffect(material: model.prefs.translucency.material)
+                        .mask(shape)
+                    shape.fill(model.prefs.translucency.fill.opacity(0.55))
+                } else {
+                    shape.fill(model.prefs.translucency == .carbon ? Island.surface : model.prefs.translucency.fill)
+                }
+            }
             .clipShape(shape)
             .contentShape(shape)
             .shadow(color: .black.opacity(model.isExpanded ? 0.5 : 0), radius: 20, y: 10)
+            .environment(\.clickHaptic, model.prefs.hapticOnClick)
             .onTapGesture {
                 guard !model.isExpanded else { return }
+                if model.prefs.hapticOnClick { hapticClick() }
                 model.expand()
             }
             .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in

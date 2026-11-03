@@ -29,6 +29,11 @@ final class CalendarService: ObservableObject {
 
     @Published private(set) var today: [AgendaEvent] = []
     @Published private(set) var upcoming: [AgendaEvent] = []
+    @Published private(set) var monthEvents: [AgendaEvent] = []
+    /// Days of the displayed month that have at least one event.
+    @Published private(set) var busyDays: Set<Int> = []
+    @Published var displayedMonth: Date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date())) ?? Date()
+    @Published var selectedDay: Date = Calendar.current.startOfDay(for: Date())
     @Published private(set) var reminders: [DueReminder] = []
     @Published private(set) var eventAccess: Access = .unknown
     @Published private(set) var reminderAccess: Access = .unknown
@@ -39,7 +44,7 @@ final class CalendarService: ObservableObject {
 
     func start() {
         let status = EKEventStore.authorizationStatus(for: .event)
-        if status == .fullAccess { eventAccess = .granted; refresh() }
+        if status == .fullAccess { eventAccess = .granted; focusToday(); refresh() }
         else if status == .denied || status == .restricted { eventAccess = .denied }
         let reminderStatus = EKEventStore.authorizationStatus(for: .reminder)
         if reminderStatus == .fullAccess { reminderAccess = .granted; refreshReminders() }
@@ -48,7 +53,10 @@ final class CalendarService: ObservableObject {
             Task { @MainActor in self?.refresh() }
         }
         dayObserver = NotificationCenter.default.addObserver(forName: .NSCalendarDayChanged, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in
+                self?.focusToday()
+                self?.refresh()
+            }
         }
     }
 
@@ -82,14 +90,52 @@ final class CalendarService: ObservableObject {
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: Date())
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
+        let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: displayedMonth)) ?? startOfDay
+        displayedMonth = monthStart
+        let monthEnd = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? endOfDay
         let horizon = calendar.date(byAdding: .hour, value: 36, to: Date()) ?? endOfDay
-        let predicate = store.predicateForEvents(withStart: startOfDay, end: max(endOfDay, horizon), calendars: nil)
+        let predicate = store.predicateForEvents(withStart: monthStart, end: max(monthEnd, horizon), calendars: nil)
         let events = store.events(matching: predicate)
             .sorted { $0.startDate < $1.startDate }
             .map(Self.agendaEvent)
+        monthEvents = events.filter { $0.start < monthEnd && $0.end > monthStart }
         today = events.filter { $0.start < endOfDay && $0.end > startOfDay }
         upcoming = events.filter { !$0.isAllDay && $0.start > Date() }
+        busyDays = Set(monthEvents.map { calendar.component(.day, from: $0.start) })
         if reminderAccess == .granted { refreshReminders() }
+    }
+
+    func focusToday() {
+        let calendar = Calendar.current
+        selectedDay = calendar.startOfDay(for: Date())
+        displayedMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: Date())) ?? displayedMonth
+    }
+
+    func events(on day: Date) -> [AgendaEvent] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start
+        return monthEvents.filter { $0.start < end && $0.end > start }
+    }
+
+    func select(day: Int) {
+        let calendar = Calendar.current
+        var parts = calendar.dateComponents([.year, .month], from: displayedMonth)
+        parts.day = day
+        selectedDay = calendar.startOfDay(for: calendar.date(from: parts) ?? selectedDay)
+    }
+
+    func shiftMonth(_ delta: Int) {
+        let calendar = Calendar.current
+        displayedMonth = calendar.date(byAdding: .month, value: delta, to: displayedMonth) ?? displayedMonth
+        if calendar.isDate(selectedDay, equalTo: displayedMonth, toGranularity: .month) == false {
+            if calendar.isDate(Date(), equalTo: displayedMonth, toGranularity: .month) {
+                selectedDay = calendar.startOfDay(for: Date())
+            } else {
+                selectedDay = displayedMonth
+            }
+        }
+        refresh()
     }
 
     func refreshReminders() {

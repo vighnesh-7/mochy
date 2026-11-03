@@ -19,7 +19,6 @@ enum Snapshot {
         model.calendar.start()
         model.shelf.load()
         model.todo.load()
-        model.stats.beginWatching()
         RunLoop.main.run(until: Date().addingTimeInterval(3))
 
         func render(_ name: String) {
@@ -41,7 +40,7 @@ enum Snapshot {
         model.show(IslandAlert(symbol: "battery.100percent.bolt", tint: .green, title: "Charging · 82%", subtitle: "1 h 10 min until full · 96 W", duration: 60))
         render("2-alert")
         model.dismissAlert()
-        for tab in [TabID.home, .shelf, .clipboard, .todo, .timer, .calendar, .stats] {
+        for tab in [TabID.home, .shelf, .clipboard, .todo, .timer, .calendar] {
             model.expand(tab: tab)
             render("3-\(tab.rawValue)")
         }

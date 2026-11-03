@@ -11,6 +11,7 @@ struct TodoItem: Identifiable, Equatable, Codable {
 @MainActor
 final class TodoStore: ObservableObject {
     @Published private(set) var items: [TodoItem] = []
+    var onCompleted: (() -> Void)?
 
     private var url: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -27,7 +28,7 @@ final class TodoStore: ObservableObject {
 
     func load() {
         guard let data = try? Data(contentsOf: url), let decoded = try? JSONDecoder().decode([TodoItem].self, from: data) else { return }
-        items = decoded
+        items = decoded.filter { !$0.done }
     }
 
     func add(_ title: String) {
@@ -41,6 +42,15 @@ final class TodoStore: ObservableObject {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index].done.toggle()
         items[index].completed = items[index].done ? Date() : nil
+        if items[index].done { onCompleted?() }
+        save()
+    }
+
+    /// Drops ticked items after the island closes, so they never sit around as “done”.
+    func commitCompleted() {
+        let remaining = items.filter { !$0.done }
+        guard remaining.count != items.count else { return }
+        items = remaining
         save()
     }
 
@@ -62,6 +72,7 @@ final class TodoStore: ObservableObject {
     }
 
     private func save() {
-        if let data = try? JSONEncoder().encode(items) { try? data.write(to: url, options: .atomic) }
+        let live = items.filter { !$0.done }
+        if let data = try? JSONEncoder().encode(live) { try? data.write(to: url, options: .atomic) }
     }
 }

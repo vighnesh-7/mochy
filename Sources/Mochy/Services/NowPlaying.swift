@@ -12,6 +12,7 @@ final class NowPlayingService: ObservableObject {
     @Published private(set) var album = ""
     @Published private(set) var appName = ""
     @Published private(set) var bundleID = ""
+    @Published private(set) var url = ""
     @Published private(set) var isPlaying = false
     @Published private(set) var duration: Double = 0
     @Published private(set) var artwork: NSImage?
@@ -25,12 +26,23 @@ final class NowPlayingService: ObservableObject {
     private var stamp = Date()
     private var rate: Double = 0
     private var artworkPath: String?
+    private var identity = ""
+    private var pausedAt: Date?
+    private var expiredIdentity: String?
     private var process: Process?
     private var buffer = Data()
     private var restartDelay: TimeInterval = 1
     private var stopping = false
 
     var hasMedia: Bool { !title.isEmpty }
+
+    func isBlocked(by hosts: [String]) -> Bool {
+        let haystack = [url, title, artist, album, appName].joined(separator: " ").lowercased()
+        return hosts.contains { host in
+            let needle = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return !needle.isEmpty && haystack.contains(needle)
+        }
+    }
 
     var appIcon: NSImage? {
         guard !bundleID.isEmpty, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
@@ -114,12 +126,23 @@ final class NowPlayingService: ObservableObject {
         }
         let newTitle = (json["title"] as? String) ?? ""
         let newArtist = (json["artist"] as? String) ?? ""
-        let changedTrack = newTitle != title || newArtist != artist
+        let newAlbum = (json["album"] as? String) ?? ""
+        let newBundle = (json["bundle"] as? String) ?? ""
+        let newIdentity = "\(newTitle)|\(newArtist)|\(newAlbum)|\(newBundle)"
+        let changedTrack = newIdentity != identity
+        if changedTrack {
+            identity = newIdentity
+            artworkPath = nil
+            artwork = nil
+            accent = .white
+            expiredIdentity = nil
+        }
         title = newTitle
         artist = newArtist
-        album = (json["album"] as? String) ?? ""
+        album = newAlbum
         appName = (json["app"] as? String) ?? ""
-        bundleID = (json["bundle"] as? String) ?? ""
+        bundleID = newBundle
+        url = (json["url"] as? String) ?? ""
         isPlaying = (json["playing"] as? Bool) ?? false
         duration = (json["duration"] as? Double) ?? 0
         rate = (json["rate"] as? Double) ?? (isPlaying ? 1 : 0)
@@ -128,18 +151,43 @@ final class NowPlayingService: ObservableObject {
             stamp = Date(timeIntervalSince1970: seconds)
         }
         lastChange = Date()
-        let path = json["artwork"] as? String
-        if path != artworkPath {
-            artworkPath = path
-            loadArtwork(path)
+        if isPlaying {
+            pausedAt = nil
+        } else if pausedAt == nil {
+            pausedAt = Date()
         }
-        if changedTrack, !newTitle.isEmpty {
+        let stale = (json["artworkStale"] as? Bool) == true
+        if stale, changedTrack {
+            artworkPath = nil
+            artwork = nil
+            accent = .white
+        } else if !stale, let path = json["artwork"] as? String {
+            if expiredIdentity == newIdentity, path == artworkPath {
+                // Expired poster of this same session: wait for a fresh write.
+            } else if path != artworkPath || artwork == nil {
+                artworkPath = path
+                expiredIdentity = nil
+                loadArtwork(path)
+            }
+        }
+        if changedTrack, !newTitle.isEmpty, isPlaying {
             onTrackChange?(newTitle, newArtist)
         }
     }
 
+    /// Drop a paused poster after fifteen seconds so a later session cannot inherit it.
+    func expireArtworkIfNeeded() {
+        guard !isPlaying, let pausedAt, Date().timeIntervalSince(pausedAt) >= 15 else { return }
+        expiredIdentity = identity
+        artwork = nil
+        artworkPath = nil
+        accent = .white
+        self.pausedAt = Date.distantPast
+    }
+
     private func loadArtwork(_ path: String?) {
-        guard let path, let image = NSImage(contentsOfFile: path) else {
+        // Read the bytes ourselves. NSImage caches by file path, so a replaced poster could stay on screen.
+        guard let path, let data = try? Data(contentsOf: URL(fileURLWithPath: path)), let image = NSImage(data: data) else {
             artwork = nil
             accent = .white
             return

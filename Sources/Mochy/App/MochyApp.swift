@@ -14,18 +14,21 @@ enum MochyMain {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = AppModel()
     private var island: IslandController?
     private var api: LocalAPI?
     private var settingsWindow: NSWindow?
-    private var statusItem: NSStatusItem?
+    private var accessories: AccessoryChrome?
     private var bag = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_: Notification) {
+        installMenu()
         NSApp.setActivationPolicy(.accessory)
+        if let url = Bundle.main.url(forResource: "Mochy", withExtension: "icns"), let icon = NSImage(contentsOf: url) {
+            NSApp.applicationIconImage = icon
+        }
         model.openSettings = { [weak self] in self?.showSettings() }
-        model.onShortcutsChanged = { [weak self] in self?.statusItem?.menu.map { self?.rebuild($0) } }
 
         island = IslandController(model: model)
         model.start()
@@ -33,14 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let api = LocalAPI(model: model)
         api.sync()
         self.api = api
+        accessories = AccessoryChrome(model: model)
 
-        setupStatusItem()
         model.$prefs
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.api?.sync()
-                self?.statusItem?.isVisible = self?.model.prefs.showMenuBarIcon ?? true
-            }
+            .sink { [weak self] _ in self?.api?.sync() }
             .store(in: &bag)
     }
 
@@ -48,9 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         api?.stop()
         model.stop()
         island?.teardown()
+        accessories?.teardown()
     }
 
-    /// Opening Mochy again from Finder or Spotlight shows Settings, which matters when the menu bar icon is hidden.
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
         showSettings()
         return false
@@ -79,6 +79,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
 
+    // MARK: Menu
+
+    private func installMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "About Mochy", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let settings = NSMenuItem(title: "Settings…", action: #selector(menuSettings), keyEquivalent: ",")
+        settings.target = self
+        appMenu.addItem(settings)
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Mochy", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Quit Mochy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "File")
+        let close = NSMenuItem(title: "Close", action: #selector(menuClose), keyEquivalent: "w")
+        close.target = self
+        fileMenu.addItem(close)
+        fileItem.submenu = fileMenu
+        main.addItem(fileItem)
+
+        NSApp.mainMenu = main
+    }
+
+    @objc private func menuSettings() {
+        showSettings()
+    }
+
+    @objc private func menuClose() {
+        if let settingsWindow, settingsWindow.isVisible {
+            settingsWindow.performClose(nil)
+            return
+        }
+        model.collapse()
+    }
+
     // MARK: Settings window
 
     private func showSettings() {
@@ -101,7 +142,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             window.delegate = self
             settingsWindow = window
         }
-        // Accessory apps can't own a focused standard window, so Mochy shows in the Dock while Settings is open.
         NSApp.setActivationPolicy(.regular)
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -111,77 +151,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard (notification.object as? NSWindow) === settingsWindow else { return }
         NSApp.setActivationPolicy(.accessory)
     }
-
-    // MARK: Status item
-
-    private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = item.button {
-            button.image = NSImage(systemSymbolName: "capsule.portrait.tophalf.filled", accessibilityDescription: "Mochy")
-                ?? NSImage(systemSymbolName: "capsule.fill", accessibilityDescription: "Mochy")
-        }
-        let menu = NSMenu()
-        menu.delegate = self
-        item.menu = menu
-        item.isVisible = model.prefs.showMenuBarIcon
-        statusItem = item
-        rebuild(menu)
-    }
-
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        rebuild(menu)
-    }
-
-    private func rebuild(_ menu: NSMenu) {
-        menu.removeAllItems()
-        if model.nowPlaying.hasMedia {
-            let playing = NSMenuItem(title: "\(model.nowPlaying.title) — \(model.nowPlaying.artist.isEmpty ? model.nowPlaying.appName : model.nowPlaying.artist)", action: nil, keyEquivalent: "")
-            playing.isEnabled = false
-            menu.addItem(playing)
-            menu.addItem(command(model.nowPlaying.isPlaying ? "Pause" : "Play", shortcut: .playPause) { [weak self] in self?.model.nowPlaying.playPause() })
-            menu.addItem(command("Next Track") { [weak self] in self?.model.nowPlaying.next() })
-            menu.addItem(.separator())
-        }
-        menu.addItem(command(model.isExpanded ? "Close the Island" : "Open the Island", shortcut: .toggleIsland) { [weak self] in self?.model.toggleIsland() })
-        menu.addItem(command("Command Palette", shortcut: .commandPalette) { [weak self] in self?.model.openPalette() })
-        menu.addItem(.separator())
-        menu.addItem(command("Clipboard History", shortcut: .clipboard) { [weak self] in self?.model.expand(tab: .clipboard, keyboard: true) })
-        menu.addItem(command("To-Do", shortcut: .todo) { [weak self] in self?.model.expand(tab: .todo, keyboard: true) })
-        menu.addItem(command("Shelf", shortcut: .shelf) { [weak self] in self?.model.expand(tab: .shelf) })
-        menu.addItem(.separator())
-        menu.addItem(command(model.timer.isRunning ? "Pause Timer" : "Start Pomodoro", shortcut: .pomodoro) { [weak self] in self?.model.togglePomodoro() })
-        let caffeine = command(model.caffeine.isActive ? "Turn Off Caffeine" : "Turn On Caffeine", shortcut: .caffeine) { [weak self] in self?.model.toggleCaffeine() }
-        caffeine.state = model.caffeine.isActive ? .on : .off
-        menu.addItem(caffeine)
-        let pin = command("Pin the Island", shortcut: .pin) { [weak self] in self?.model.runShortcut(.pin) }
-        pin.state = model.pinned ? .on : .off
-        menu.addItem(pin)
-        menu.addItem(.separator())
-        menu.addItem(command("Settings…", shortcut: .settings) { [weak self] in self?.showSettings() })
-        menu.addItem(command("Quit Mochy") { NSApp.terminate(nil) })
-    }
-
-    private func command(_ title: String, shortcut: ShortcutID? = nil, action: @escaping () -> Void) -> NSMenuItem {
-        let item = ClosureMenuItem(title: title, action: action)
-        if let shortcut, let combo = model.prefs.shortcuts[shortcut], !combo.menuKeyEquivalent.isEmpty {
-            item.keyEquivalent = combo.menuKeyEquivalent
-            item.keyEquivalentModifierMask = combo.menuModifiers
-        }
-        return item
-    }
-}
-
-private final class ClosureMenuItem: NSMenuItem {
-    private let handler: () -> Void
-
-    init(title: String, action handler: @escaping () -> Void) {
-        self.handler = handler
-        super.init(title: title, action: #selector(run), keyEquivalent: "")
-        target = self
-    }
-
-    @available(*, unavailable)
-    required init(coder _: NSCoder) { fatalError("unused") }
-
-    @objc private func run() { handler() }
 }

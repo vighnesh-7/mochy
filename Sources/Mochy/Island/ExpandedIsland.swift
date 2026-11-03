@@ -10,16 +10,24 @@ struct ExpandedIsland: View {
         VStack(spacing: 0) {
             header.frame(height: model.headerHeight)
             ZStack {
-                TabContent(tab: model.tab)
-                    .id(model.tab)
-                    .transition(reduceMotion ? .opacity : .push(from: forward ? .trailing : .leading))
+                CalendarPanel(calendar: model.calendar)
+                    .opacity(model.tab == .calendar ? 1 : 0)
+                    .allowsHitTesting(model.tab == .calendar)
+                    .accessibilityHidden(model.tab != .calendar)
+                if model.tab != .calendar {
+                    TabContent(tab: model.tab)
+                        .id(model.tab)
+                        .transition(reduceMotion ? .opacity : .push(from: forward ? .trailing : .leading))
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
-            .padding(.horizontal, 16)
-            .padding(.top, 6)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 12)
+            .padding(.top, AppModel.expandedContentTop)
+            .padding(.bottom, AppModel.expandedContentBottom)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .overlay {
             if model.paletteOpen {
                 CommandPalette()
@@ -37,7 +45,7 @@ struct ExpandedIsland: View {
 
     private var header: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 2) {
+            HStack(spacing: CGFloat(model.prefs.tabIconGap)) {
                 let strip = headerTabs
                 ForEach(strip.shown) { item in tabButton(item) }
                 if strip.overflow {
@@ -47,6 +55,7 @@ struct ExpandedIsland: View {
                     }
                 }
             }
+            .animation(Island.spring(reduceMotion), value: model.tab)
             .frame(width: sideWidth, alignment: .leading)
 
             Spacer(minLength: 0)
@@ -64,6 +73,16 @@ struct ExpandedIsland: View {
                     model.paletteOpen.toggle()
                     if model.paletteOpen { model.focusRequest = UUID() }
                 }
+                IslandIconButton(
+                    symbol: model.prefs.alwaysShowNowPlaying ? "music.note" : "music.note.slash",
+                    label: model.prefs.alwaysShowNowPlaying ? "Hide Now Playing on the Notch" : "Show Now Playing on the Notch",
+                    active: model.prefs.alwaysShowNowPlaying
+                ) {
+                    model.prefs.alwaysShowNowPlaying.toggle()
+                }
+                CaffeineHeaderButton(caffeine: model.caffeine) {
+                    model.toggleCaffeine()
+                }
                 IslandIconButton(symbol: model.pinned ? "pin.fill" : "pin", label: model.pinned ? "Unpin the Island" : "Pin the Island Open", active: model.pinned) {
                     model.pinned.toggle()
                 }
@@ -78,10 +97,12 @@ struct ExpandedIsland: View {
         .padding(.top, 2)
     }
 
-    /// Tabs that fit beside the notch at 30 pt each; the current tab always stays in view.
+    /// Tabs that fit beside the notch at the current icon gap; the current tab always stays in view.
     private var headerTabs: (shown: [TabID], overflow: Bool) {
         let tabs = model.visibleTabs
-        let capacity = max(1, Int((sideWidth + 2) / 30))
+        let gap = CGFloat(model.prefs.tabIconGap)
+        let cell = 26 + gap
+        let capacity = max(1, Int((sideWidth + gap) / max(cell, 1)))
         guard tabs.count > capacity else { return (tabs, false) }
         var shown = Array(tabs.prefix(max(capacity - 1, 1)))
         if !shown.contains(model.tab), let last = shown.indices.last { shown[last] = model.tab }
@@ -94,15 +115,17 @@ struct ExpandedIsland: View {
             select(item)
         } label: {
             Image(systemName: item.symbol)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(selected ? Island.primary : Island.secondary)
-                .frame(width: 28, height: 28)
+                .frame(width: 26 + CGFloat(model.prefs.tabIconGap), height: 22 + CGFloat(model.prefs.tabIconGap) * 0.5)
                 .background {
                     if selected {
-                        Capsule().fill(Color.white.opacity(0.16)).matchedGeometryEffect(id: "tab", in: selection)
+                        Capsule()
+                            .fill(Color.white.opacity(0.16))
+                            .matchedGeometryEffect(id: "tabPill", in: selection)
                     }
                 }
-                .contentShape(Rectangle())
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .help(item.title)
@@ -125,6 +148,20 @@ struct ExpandedIsland: View {
     }
 }
 
+private struct CaffeineHeaderButton: View {
+    @ObservedObject var caffeine: CaffeineService
+    let action: () -> Void
+
+    var body: some View {
+        IslandIconButton(
+            symbol: caffeine.isActive ? "cup.and.saucer.fill" : "cup.and.saucer",
+            label: caffeine.isActive ? "Turn Off Caffeine" : "Keep This Mac Awake",
+            active: caffeine.isActive,
+            action: action
+        )
+    }
+}
+
 private struct TabContent: View {
     @EnvironmentObject var model: AppModel
     let tab: TabID
@@ -132,12 +169,13 @@ private struct TabContent: View {
     var body: some View {
         switch tab {
         case .home: HomePanel()
+        case .nowPlaying: NowPlayingCard(media: model.nowPlaying)
         case .shelf: ShelfPanel(shelf: model.shelf)
         case .clipboard: ClipboardPanel(clipboard: model.clipboard)
-        case .todo: TodoPanel(todo: model.todo, calendar: model.calendar)
+        case .todo: TodoPanel(todo: model.todo)
         case .timer: TimerPanel(timer: model.timer)
         case .calendar: CalendarPanel(calendar: model.calendar)
-        case .stats: SystemPanel(stats: model.stats, battery: model.battery)
+        case .stats: SystemPanel(battery: model.battery)
         case .notes: NotesPanel(notes: model.notes)
         case .calculator: CalculatorPanel(calculator: model.calculator)
         case .quickSearch: SearchPanel()

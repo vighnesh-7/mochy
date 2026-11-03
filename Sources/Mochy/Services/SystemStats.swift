@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOKit
 
 struct StatsSample: Equatable {
     var cpu: Double = 0
@@ -9,6 +10,8 @@ struct StatsSample: Equatable {
     var networkOut: Double = 0
     var diskFree: Int64 = 0
     var diskTotal: Int64 = 0
+    /// nil when this Mac doesn't publish a GPU utilization counter.
+    var gpu: Double?
 
     var memoryFraction: Double { memoryTotal == 0 ? 0 : Double(memoryUsed) / Double(memoryTotal) }
     var diskUsedFraction: Double { diskTotal == 0 ? 0 : 1 - Double(diskFree) / Double(diskTotal) }
@@ -25,12 +28,9 @@ final class SystemStatsService: ObservableObject {
     private var watchers = 0
 
     func beginWatching() {
-        watchers += 1
-        guard timer == nil else { return }
-        tick()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
+        timer?.invalidate()
+        timer = nil
+        watchers = 0
     }
 
     func endWatching() {
@@ -48,6 +48,7 @@ final class SystemStatsService: ObservableObject {
             next.networkIn = net.0
             next.networkOut = net.1
         }
+        next.gpu = gpuUtilization()
         if let values = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]) {
             next.diskFree = values.volumeAvailableCapacityForImportantUsage ?? 0
             next.diskTotal = Int64(values.volumeTotalCapacity ?? 0)
@@ -83,6 +84,25 @@ final class SystemStatsService: ObservableObject {
             total += delta[0] + delta[1] + delta[2] + delta[3]
         }
         return total == 0 ? 0 : Double(busy) / Double(total)
+    }
+
+    /// Apple's GPU driver publishes "Device Utilization %" on the accelerator. Nothing is invented when the key is absent.
+    private func gpuUtilization() -> Double? {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &iterator) == KERN_SUCCESS else { return nil }
+        defer { IOObjectRelease(iterator) }
+        var best: Double?
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer { IOObjectRelease(service) }
+            var properties: Unmanaged<CFMutableDictionary>?
+            guard IORegistryEntryCreateCFProperties(service, &properties, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+                  let stats = (properties?.takeRetainedValue() as? [String: Any])?["PerformanceStatistics"] as? [String: Any],
+                  let number = stats["Device Utilization %"] as? NSNumber
+            else { continue }
+            let fraction = min(max(number.doubleValue / 100, 0), 1)
+            if best == nil || fraction > best! { best = fraction }
+        }
+        return best
     }
 
     private func memoryUsed() -> UInt64 {
@@ -131,6 +151,14 @@ enum ByteFormat {
 
     static func rate(_ bytesPerSecond: Double) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytesPerSecond), countStyle: .file) + "/s"
+    }
+
+    static func compactRate(_ bytesPerSecond: Double) -> String {
+        switch bytesPerSecond {
+        case ..<1_000: "\(Int(bytesPerSecond)) B"
+        case ..<1_000_000: String(format: "%.0fK", bytesPerSecond / 1_000)
+        default: String(format: "%.1fM", bytesPerSecond / 1_000_000)
+        }
     }
 
     static func storage(_ bytes: Int64) -> String {

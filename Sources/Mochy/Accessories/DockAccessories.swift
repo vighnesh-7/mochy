@@ -1,0 +1,497 @@
+import AppKit
+import Combine
+import CoreGraphics
+import SwiftUI
+
+/// Compact to-do and clipboard cards used by the menu bar and the dock-adjacent chips.
+struct CompactTodoCard: View {
+    @ObservedObject var todo: TodoStore
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("To-Do").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text("\(todo.openCount)").font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 6) {
+                Image(systemName: "plus.circle.fill").foregroundStyle(.orange)
+                TextField("New item", text: $draft)
+                    .textFieldStyle(.plain)
+                    .focused($focused)
+                    .onSubmit {
+                        todo.add(draft)
+                        draft = ""
+                    }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            if todo.items.isEmpty {
+                Text("Nothing yet").font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 36)
+            } else {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 4) {
+                        ForEach(todo.ordered) { item in
+                            HStack(spacing: 8) {
+                                Button { todo.toggle(item) } label: {
+                                    Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(item.done ? Color.green : .secondary)
+                                }
+                                .buttonStyle(.plain)
+                                Text(item.title)
+                                    .font(.system(size: 12.5))
+                                    .strikethrough(item.done)
+                                    .foregroundStyle(item.done ? .secondary : .primary)
+                                    .lineLimit(2)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: 26)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 280)
+        .frame(maxHeight: 220)
+        .onAppear { focused = true }
+    }
+}
+
+struct CompactClipboardCard: View {
+    @ObservedObject var clipboard: ClipboardService
+    var onPick: ((ClipItem) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Clipboard").font(.system(size: 13, weight: .semibold))
+            if clipboard.filtered.isEmpty {
+                Text("Nothing copied yet").font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 36)
+            } else {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 4) {
+                        ForEach(Array(clipboard.filtered.prefix(9).enumerated()), id: \.element.id) { index, item in
+                            HStack(spacing: 6) {
+                                Button {
+                                    if let onPick {
+                                        onPick(item)
+                                    } else {
+                                        clipboard.copy(item)
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text(item.text)
+                                            .font(.system(size: 12))
+                                            .lineLimit(2)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        Text("\(index + 1)").font(.system(size: 12, weight: .bold).monospacedDigit()).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                if let url = item.openURL {
+                                    Button {
+                                        NSWorkspace.shared.open(url)
+                                    } label: {
+                                        Image(systemName: "arrow.up.right")
+                                            .font(.system(size: 11, weight: .bold))
+                                            .frame(width: 22, height: 22)
+                                            .background(Capsule().fill(.white.opacity(0.14)))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Open link")
+                                    .accessibilityLabel("Open Link")
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 280)
+        .frame(maxHeight: 220)
+    }
+}
+
+struct GlassChip: View {
+    let symbol: String
+    let label: String
+    var badge: String?
+    var tint: Color = .white
+    var size: CGFloat = 56
+    let action: () -> Void
+
+    var body: some View {
+        let icon = max(24, size * 40 / 56)
+        let radius = max(8, size * 13 / 56)
+        let pad = max(4, size * 8 / 56)
+        return Button(action: action) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: symbol)
+                    .font(.system(size: max(11, size * 16 / 56), weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: icon, height: icon)
+                    .background {
+                        VisualEffect(material: .hudWindow, blending: .behindWindow)
+                        RoundedRectangle(cornerRadius: radius, style: .continuous).fill(.white.opacity(0.08))
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(.white.opacity(0.22), lineWidth: 0.8))
+                    .padding(pad)
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: max(7, size * 9 / 56), weight: .bold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.red))
+                        .foregroundStyle(.white)
+                        .padding(3)
+                }
+            }
+            .frame(width: size, height: size)
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
+struct AudioConnectBanner: View {
+    let name: String
+    let airPods: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: airPods ? "airpodspro" : "headphones")
+                .font(.system(size: 18, weight: .semibold))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Connected").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(width: 220, alignment: .leading)
+        .background {
+            VisualEffect(material: .hudWindow)
+            RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.white.opacity(0.08))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.2), lineWidth: 0.8))
+    }
+}
+
+/// Floating glass chips beside the Dock, plus compact popovers for To-Do and Clipboard.
+@MainActor
+final class AccessoryChrome {
+    private let model: AppModel
+    private let audio = AudioDeviceMonitor()
+    private var rightPanel: NSPanel?
+    private var leftPanel: NSPanel?
+    private var popover: NSPanel?
+    private var banner: NSPanel?
+    private var outsideMonitor: Any?
+    private var bag = Set<AnyCancellable>()
+    private var bannerWork: DispatchWorkItem?
+    private var todoItem: NSStatusItem?
+    private var clipboardItem: NSStatusItem?
+    private var menuTargets: [StatusClick] = []
+
+    init(model: AppModel) {
+        self.model = model
+        if model.prefs.dockAudio { audio.start() }
+        audio.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.syncDock() }
+            .store(in: &bag)
+        audio.$announce
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] name in self?.showAudioBanner(name) }
+            .store(in: &bag)
+        model.$prefs
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.model.prefs.dockAudio { self.audio.start() }
+                self.syncMenuBar()
+                self.syncDock()
+            }
+            .store(in: &bag)
+        model.todo.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.syncDock() }
+            .store(in: &bag)
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.syncDock() }
+            .store(in: &bag)
+        syncMenuBar()
+        syncDock()
+    }
+
+    func teardown() {
+        audio.stop()
+        dismissPopover()
+        [rightPanel, leftPanel, banner].forEach { $0?.orderOut(nil) }
+        if let todoItem { NSStatusBar.system.removeStatusItem(todoItem) }
+        if let clipboardItem { NSStatusBar.system.removeStatusItem(clipboardItem) }
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
+    }
+
+    // MARK: Menu bar
+
+    private func syncMenuBar() {
+        menuTargets.removeAll()
+        todoItem = barButton(todoItem, visible: model.prefs.menuBarTodo, symbol: "checklist", name: "To-Do") { [weak self] in
+            self?.togglePopover(.todo, from: self?.todoItem)
+        }
+        clipboardItem = barButton(clipboardItem, visible: model.prefs.menuBarClipboard, symbol: "doc.on.clipboard", name: "Clipboard") { [weak self] in
+            self?.togglePopover(.clipboard, from: self?.clipboardItem)
+        }
+    }
+
+    private func barButton(_ existing: NSStatusItem?, visible: Bool, symbol: String, name: String, action: @escaping () -> Void) -> NSStatusItem? {
+        guard visible else {
+            if let existing { NSStatusBar.system.removeStatusItem(existing) }
+            return nil
+        }
+        let item = existing ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let target = StatusClick(action)
+        menuTargets.append(target)
+        if let button = item.button {
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)
+            button.target = target
+            button.action = #selector(StatusClick.fire)
+        }
+        item.isVisible = true
+        return item
+    }
+
+    // MARK: Dock chips
+
+    private func syncDock() {
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let dock = DockGeometry.frame(on: screen)
+        let scale = CGFloat(min(max(model.prefs.dockIconScale, 0.5), 1))
+        let panelH: CGFloat = 60 * scale
+        let chipW: CGFloat = 60 * scale
+        let chipSize: CGFloat = 56 * scale
+        let gap: CGFloat = 14
+        let vis = screen.visibleFrame
+        let shiftX = CGFloat(model.prefs.dockOffsetX)
+        let lower = CGFloat(model.prefs.dockOffsetY)
+        let alignedY: CGFloat
+        let alignedLeftX: CGFloat
+        let alignedRightX: (CGFloat) -> CGFloat
+        if let dock, dock.width >= dock.height {
+            alignedY = dock.midY - panelH / 2
+            alignedLeftX = dock.minX - gap - chipW
+            alignedRightX = { _ in dock.maxX + gap }
+        } else if let dock {
+            alignedY = dock.minY
+            alignedLeftX = dock.midX - chipW / 2
+            alignedRightX = { width in dock.midX - width / 2 }
+        } else {
+            let dockHeight = max(vis.minY - screen.frame.minY, 56)
+            alignedY = screen.frame.minY + (dockHeight - panelH) / 2
+            alignedLeftX = vis.minX + 14
+            alignedRightX = { width in vis.maxX - width - 14 }
+        }
+        let y = max(screen.frame.minY + 2, alignedY - lower)
+        func clampX(_ x: CGFloat, width: CGFloat) -> CGFloat {
+            min(max(x, vis.minX + 4), vis.maxX - width - 4)
+        }
+
+        var right: [(symbol: String, label: String, badge: String?, action: () -> Void)] = []
+        if model.prefs.dockTodo {
+            right.append(("checklist", "To-Do", model.todo.openCount > 0 ? "\(model.todo.openCount)" : nil, { [weak self] in self?.togglePopover(.todo, anchor: nil) }))
+        }
+        if model.prefs.dockClipboard {
+            right.append(("doc.on.clipboard.fill", "Clipboard", nil, { [weak self] in self?.togglePopover(.clipboard, anchor: nil) }))
+        }
+
+        if right.isEmpty {
+            rightPanel?.orderOut(nil)
+            rightPanel = nil
+        } else {
+            let width = CGFloat(right.count) * chipW
+            let panel = reuse(&rightPanel, size: CGSize(width: width, height: panelH))
+            let view = HStack(spacing: 4) {
+                ForEach(Array(right.enumerated()), id: \.offset) { _, item in
+                    GlassChip(symbol: item.symbol, label: item.label, badge: item.badge, size: chipSize, action: item.action)
+                }
+            }
+            .environment(\.colorScheme, .dark)
+            host(view, in: panel)
+            let x = clampX(clampX(alignedRightX(width), width: width) + shiftX, width: width)
+            panel.setFrame(NSRect(x: x, y: y, width: width, height: panelH), display: true)
+            panel.orderFrontRegardless()
+        }
+
+        if model.prefs.dockAudio {
+            let panel = reuse(&leftPanel, size: CGSize(width: chipW, height: panelH))
+            let name = audio.connectedName ?? "Bluetooth"
+            host(GlassChip(symbol: "airpodspro", label: name, size: chipSize, action: { [weak self] in
+                self?.showAudioBanner(name)
+            }).environment(\.colorScheme, .dark), in: panel)
+            let x = clampX(clampX(alignedLeftX, width: chipW) - shiftX, width: chipW)
+            panel.setFrame(NSRect(x: x, y: y, width: chipW, height: panelH), display: true)
+            panel.orderFrontRegardless()
+        } else {
+            leftPanel?.orderOut(nil)
+            leftPanel = nil
+        }
+    }
+
+    private func showAudioBanner(_ name: String) {
+        guard model.prefs.dockAudio else { return }
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let vis = screen.visibleFrame
+        let panel = reuse(&banner, size: CGSize(width: 236, height: 56))
+        host(AudioConnectBanner(name: name, airPods: audio.isAirPods).environment(\.colorScheme, .dark), in: panel)
+        let y = (leftPanel?.frame.maxY ?? vis.minY) + 10
+        panel.setFrameOrigin(NSPoint(x: vis.minX + 14, y: y))
+        panel.orderFrontRegardless()
+        bannerWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.banner?.orderOut(nil)
+            self?.audio.announce = nil
+        }
+        bannerWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
+    }
+
+    // MARK: Popover
+
+    private enum Kind { case todo, clipboard }
+
+    private func togglePopover(_ kind: Kind, from item: NSStatusItem? = nil, anchor: NSPoint? = nil) {
+        if popover?.isVisible == true {
+            dismissPopover()
+            return
+        }
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front.bundleIdentifier != Bundle.main.bundleIdentifier
+        {
+            model.previousFrontApp = front
+        }
+        let size = NSSize(width: 304, height: 236)
+        let panel = reuse(&popover, size: size)
+        panel.level = .popUpMenu
+        switch kind {
+        case .todo:
+            host(CompactTodoCard(todo: model.todo).environment(\.colorScheme, .dark), in: panel)
+        case .clipboard:
+            host(CompactClipboardCard(clipboard: model.clipboard, onPick: { [weak self] item in
+                self?.pickClipboard(item)
+            }).environment(\.colorScheme, .dark), in: panel)
+        }
+        if let button = item?.button, let window = button.window {
+            let rect = button.convert(button.bounds, to: nil)
+            let screen = window.convertToScreen(rect)
+            panel.setFrameOrigin(NSPoint(x: screen.midX - size.width + 28, y: screen.minY - size.height - 8))
+        } else if let right = rightPanel {
+            panel.setFrameOrigin(NSPoint(x: right.frame.maxX - size.width, y: right.frame.maxY + 8))
+        } else {
+            panel.center()
+        }
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        installOutside()
+    }
+
+    private func pickClipboard(_ item: ClipItem) {
+        dismissPopover()
+        model.pastePlainText(item.text)
+    }
+
+    private func dismissPopover() {
+        popover?.orderOut(nil)
+        model.todo.commitCompleted()
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
+        outsideMonitor = nil
+    }
+
+    private func installOutside() {
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
+        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            MainActor.assumeIsolated { self?.dismissPopover() }
+        }
+    }
+
+    private func reuse(_ slot: inout NSPanel?, size: CGSize) -> NSPanel {
+        let panel = slot ?? AccessoryPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        panel.hidesOnDeactivate = false
+        panel.isMovable = false
+        panel.sharingType = model.prefs.hideIslandFromScreenshots ? .none : .readWrite
+        slot = panel
+        panel.setContentSize(size)
+        return panel
+    }
+
+    private func host<V: View>(_ view: V, in panel: NSPanel) {
+        let wrapped = view
+            .background {
+                VisualEffect(material: .hudWindow)
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.black.opacity(0.25))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        panel.contentView = NSHostingView(rootView: wrapped)
+    }
+}
+
+private final class AccessoryPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+enum DockGeometry {
+    static func frame(on screen: NSScreen) -> NSRect? {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        var best: NSRect?
+        for window in list {
+            guard (window[kCGWindowOwnerName as String] as? String) == "Dock" else { continue }
+            guard let bounds = window[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
+            let width = bounds["Width"] ?? 0
+            let height = bounds["Height"] ?? 0
+            if width < 40 || height < 32 { continue }
+            let quartz = CGRect(x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0, width: width, height: height)
+            let rect = cocoa(quartz)
+            if best == nil || rect.width * rect.height > best!.width * best!.height {
+                best = rect
+            }
+        }
+        return best
+    }
+
+    private static func cocoa(_ quartz: CGRect) -> NSRect {
+        let primary = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main ?? NSScreen.screens[0]
+        return NSRect(
+            x: quartz.origin.x,
+            y: primary.frame.maxY - quartz.origin.y - quartz.height,
+            width: quartz.width,
+            height: quartz.height
+        )
+    }
+}
+
+final class StatusClick: NSObject {
+    private let handler: () -> Void
+    init(_ handler: @escaping () -> Void) { self.handler = handler }
+    @objc func fire() { handler() }
+}

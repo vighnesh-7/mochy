@@ -1,5 +1,7 @@
 import AppKit
+import ApplicationServices
 import Combine
+import CoreGraphics
 import Foundation
 import SwiftUI
 
@@ -20,7 +22,7 @@ struct NotchGeometry: Equatable {
 }
 
 enum LiveActivity: Equatable {
-    case media, timer, download, volume, caffeine, charging
+    case media, timer, download, volume, brightness, caffeine, charging
 }
 
 enum AlertAction: Equatable {
@@ -86,6 +88,9 @@ final class AppModel: ObservableObject {
     let downloads = DownloadMonitor()
     let timer = FocusTimer()
     let volume = VolumeMonitor()
+    let brightness = BrightnessMonitor()
+    /// The app that was in front before the island took the keyboard, so a numbered snippet can be pasted back into it.
+    var previousFrontApp: NSRunningApplication?
     let weather = WeatherService()
     let notes = NotesService()
     let calculator = CalculatorService()
@@ -102,7 +107,11 @@ final class AppModel: ObservableObject {
 
     init() {
         prefs = Preferences.load()
-        if let first = prefs.tabOrder.first { tab = first }
+        if Preferences.needsHUDSave {
+            Preferences.needsHUDSave = false
+            prefs.save()
+        }
+        if let first = prefs.tabOrder.first(where: { $0 != .stats }) { tab = first }
     }
 
     // MARK: Lifecycle
@@ -117,7 +126,10 @@ final class AppModel: ObservableObject {
         todo.load()
         downloads.start()
         volume.start()
+        brightness.start()
         notes.load()
+        clipboard.onInserted = { [weak self] in self?.playClipboardSound() }
+        todo.onCompleted = { [weak self] in self?.playTodoCompleteSound() }
         if prefs.screenshotsToShelf { screenshots.start() }
         bindEvents()
         registerShortcuts()
@@ -135,22 +147,35 @@ final class AppModel: ObservableObject {
 
     // MARK: Island state
 
-    var visibleTabs: [TabID] { prefs.tabOrder }
+    var visibleTabs: [TabID] { prefs.tabOrder.filter { $0 != .stats } }
 
-    /// The expanded header shares the camera band; 34 pt keeps 28 pt controls clear of the edge.
+    /// The expanded header shares the camera band; 34 pt keeps 22 pt tab pills clear of the edge.
     var headerHeight: CGFloat { max(notch.height, 34) }
+
+    /// Space inside the expanded body for the tab, above the bottom rounding.
+    static let expandedContentTop: CGFloat = 4
+    static let expandedContentBottom: CGFloat = 4
 
     var islandBodySize: CGSize {
         if isExpanded {
-            return CGSize(width: prefs.panelSize.width, height: headerHeight + prefs.panelSize.contentHeight)
+            return CGSize(
+                width: prefs.panelSize.width + CGFloat(prefs.activityWidthExtra),
+                height: headerHeight
+                    + prefs.panelSize.contentHeight
+                    + Self.expandedContentTop
+                    + Self.expandedContentBottom
+            )
         }
         if alert != nil {
-            return CGSize(width: max(notch.width + 220, 420), height: notch.height + 62)
+            return CGSize(width: max(notch.width + 280, 500), height: notch.height + 62)
         }
+        let scale = CGFloat(max(0.8, min(prefs.closedPillScale, 1.4)))
         if let activity {
-            return CGSize(width: notch.width + 2 * Self.earWidth(activity), height: notch.height)
+            let extra = CGFloat(prefs.activityWidthExtra)
+            let height = max(22, notch.height + CGFloat(prefs.activityHeightExtra))
+            return CGSize(width: notch.width * scale + 2 * (earWidth(activity) + extra), height: height)
         }
-        return CGSize(width: notch.width, height: notch.height)
+        return CGSize(width: notch.width * scale, height: notch.height * scale)
     }
 
     var cornerRadii: (top: CGFloat, bottom: CGFloat) {
@@ -161,17 +186,26 @@ final class AppModel: ObservableObject {
 
     static func earWidth(_ activity: LiveActivity) -> CGFloat {
         switch activity {
-        case .media, .caffeine, .charging: 44
-        case .timer, .download, .volume: 58
+        case .media: 64
+        case .caffeine, .charging: 52
+        case .timer, .download: 72
+        case .volume, .brightness: 88
         }
     }
 
+    func earWidth(_ activity: LiveActivity) -> CGFloat {
+        Self.earWidth(activity) + CGFloat(prefs.activityWidthExtra)
+    }
+
     func expand(tab newTab: TabID? = nil, keyboard: Bool = false) {
-        if let newTab {
+        if let newTab, newTab != .stats {
             if !prefs.tabOrder.contains(newTab) { prefs.tabOrder.append(newTab) }
             tab = newTab
-        } else if !prefs.rememberLastTab, let first = prefs.tabOrder.first {
-            tab = first
+        } else if prefs.openOnCurrentActivity, let activityTab = tabForCurrentActivity() {
+            tab = activityTab
+        } else if !prefs.rememberLastTab {
+            let preferred = prefs.defaultTab
+            tab = visibleTabs.contains(preferred) ? preferred : (visibleTabs.first ?? .home)
         }
         wantsKeyboard = keyboard
         dismissAlert()
@@ -185,6 +219,17 @@ final class AppModel: ObservableObject {
         paletteOpen = false
         fileDragActive = false
         wantsKeyboard = false
+        todo.commitCompleted()
+    }
+
+    private func tabForCurrentActivity() -> TabID? {
+        if nowPlaying.hasMedia, nowPlaying.isPlaying, !nowPlaying.isBlocked(by: prefs.mediaBlacklist), prefs.tabOrder.contains(.nowPlaying) {
+            return .nowPlaying
+        }
+        if timer.isRunning || timer.isActive, prefs.tabOrder.contains(.timer) {
+            return .timer
+        }
+        return nil
     }
 
     func toggleIsland() { isExpanded ? collapse() : expand() }
@@ -263,7 +308,7 @@ final class AppModel: ObservableObject {
     }
 
     var paletteCommands: [PaletteCommand] {
-        var list: [PaletteCommand] = TabID.allCases.map { item in
+        var list: [PaletteCommand] = TabID.allCases.filter { $0 != .stats }.map { item in
             PaletteCommand(id: "tab.\(item.rawValue)", title: item.title, symbol: item.symbol, detail: "Tab") { [weak self] in
                 self?.paletteOpen = false
                 self?.expand(tab: item, keyboard: item == .todo || item == .clipboard)
@@ -341,7 +386,7 @@ final class AppModel: ObservableObject {
         if prefs.screenshotsToShelf != previous.screenshotsToShelf {
             prefs.screenshotsToShelf ? screenshots.start() : screenshots.stop()
         }
-        if !prefs.tabOrder.contains(tab), let first = prefs.tabOrder.first { tab = first }
+        if tab == .stats || !visibleTabs.contains(tab), let first = visibleTabs.first { tab = first }
         recomputeActivity()
     }
 
@@ -349,6 +394,9 @@ final class AppModel: ObservableObject {
         clipboard.enabled = prefs.clipboardHistory
         clipboard.limit = prefs.clipboardLimit
         clipboard.stripTrackers = prefs.stripLinkTrackers
+        let persistChanged = clipboard.persistAll != prefs.clipboardPersist
+        clipboard.persistAll = prefs.clipboardPersist
+        if persistChanged { clipboard.persist() }
         timer.focusMinutes = prefs.focusMinutes
         timer.shortBreakMinutes = prefs.shortBreakMinutes
         timer.longBreakMinutes = prefs.longBreakMinutes
@@ -366,6 +414,7 @@ final class AppModel: ObservableObject {
             downloads.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             caffeine.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             volume.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            brightness.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             battery.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
         ]
         Publishers.MergeMany(changes)
@@ -374,7 +423,8 @@ final class AppModel: ObservableObject {
             .store(in: &bag)
 
         nowPlaying.onTrackChange = { [weak self] title, artist in
-            guard let self, self.prefs.trackChangePeek, !self.isExpanded, self.nowPlaying.isPlaying else { return }
+            guard let self, self.prefs.trackChangePeek, self.prefs.mediaActivity, !self.isExpanded, self.nowPlaying.isPlaying else { return }
+            guard !self.nowPlaying.isBlocked(by: self.prefs.mediaBlacklist) else { return }
             self.show(IslandAlert(style: .track, symbol: "music.note", tint: self.nowPlaying.accent, title: title, subtitle: artist.isEmpty ? self.nowPlaying.appName : artist, duration: 3))
         }
 
@@ -415,6 +465,7 @@ final class AppModel: ObservableObject {
     }
 
     private func everySecond() {
+        nowPlaying.expireArtworkIfNeeded()
         recomputeActivity()
         checkEventAlerts()
     }
@@ -448,10 +499,9 @@ final class AppModel: ObservableObject {
     }
 
     private func resolveActivity() -> LiveActivity? {
-        if prefs.volumeActivity, Date().timeIntervalSince(volume.changedAt) < 1.6 { return .volume }
         if prefs.downloadActivity, downloads.primary != nil { return .download }
         if prefs.timerActivity, timer.isRunning || (timer.isActive && timer.mode != .stopwatch) { return .timer }
-        if prefs.mediaActivity, nowPlaying.hasMedia,
+        if prefs.alwaysShowNowPlaying, nowPlaying.hasMedia, !nowPlaying.isBlocked(by: prefs.mediaBlacklist),
            nowPlaying.isPlaying || Date().timeIntervalSince(nowPlaying.lastChange) < prefs.keepPausedMediaSeconds
         {
             return .media
@@ -459,6 +509,103 @@ final class AppModel: ObservableObject {
         if prefs.caffeineActivity, caffeine.isActive { return .caffeine }
         if battery.vitals.isCharging, prefs.chargingAlerts { return .charging }
         return nil
+    }
+
+    func playClipboardSound() {
+        guard prefs.clipboardSound != .none else { return }
+        playSound(named: prefs.clipboardSound.rawValue)
+    }
+
+    /// Copies as plain text, plays a confirmation, and pastes into the previous app when a text field is focused.
+    func pastePlainText(_ text: String) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(text, forType: .string)
+        clipboard.noteExternalChange()
+        playPopSound()
+        let target = previousFrontApp
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            target?.activate(options: [.activateAllWindows])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                guard Self.accessibilityTrusted(prompt: false), Self.focusedElementIsEditable() else { return }
+                Self.postCommandV()
+            }
+        }
+    }
+
+    func playPopSound() {
+        playSound(named: "pop")
+    }
+
+    func playTodoCompleteSound() {
+        playSound(named: "pop")
+    }
+
+    private func playSound(named name: String) {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "wav", subdirectory: "Sounds") else { return }
+        NSSound(contentsOf: url, byReference: true)?.play()
+    }
+
+    /// Slot 1 is the newest copy. Copies it, then sends Command-V to the app that was in front.
+    func pasteClipboard(slot: Int) {
+        let items = clipboard.filtered
+        guard (1 ... 9).contains(slot), slot <= items.count else { return }
+        clipboard.copy(items[slot - 1])
+        collapse()
+        let target = previousFrontApp
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self else { return }
+            target?.activate(options: [.activateAllWindows])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                guard Self.accessibilityTrusted(prompt: true) else {
+                    self.show(IslandAlert(
+                        symbol: "doc.on.clipboard",
+                        tint: .white,
+                        title: "Snippet \(slot) Copied",
+                        subtitle: "Allow Mochy in Accessibility to paste with the number keys",
+                        duration: 4
+                    ))
+                    return
+                }
+                Self.postCommandV()
+            }
+        }
+    }
+
+    private static func accessibilityTrusted(prompt: Bool) -> Bool {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let options = [key: prompt] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
+    private static func focusedElementIsEditable() -> Bool {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let element = focused
+        else { return false }
+        let item = element as! AXUIElement
+        var role: CFTypeRef?
+        AXUIElementCopyAttributeValue(item, kAXRoleAttribute as CFString, &role)
+        let name = (role as? String) ?? ""
+        if ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXEditableText"].contains(name) {
+            return true
+        }
+        var settable: DarwinBoolean = false
+        if AXUIElementIsAttributeSettable(item, kAXValueAttribute as CFString, &settable) == .success, settable.boolValue {
+            return true
+        }
+        return false
+    }
+
+    private static func postCommandV() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
+        down?.flags = .maskCommand
+        up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
     }
 }
 

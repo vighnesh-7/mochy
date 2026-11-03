@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The island is always black so it reads as an extension of the camera housing.
@@ -62,14 +63,34 @@ struct NotchShape: Shape {
 /// A rounded card inside the expanded island.
 struct IslandCard<Content: View>: View {
     var padding: CGFloat = 12
+    var fillHeight = true
     @ViewBuilder var content: Content
 
     var body: some View {
         content
             .padding(padding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: fillHeight ? .infinity : nil, alignment: .topLeading)
             .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Island.card))
     }
+}
+
+private struct ClickHapticKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var clickHaptic: Bool {
+        get { self[ClickHapticKey.self] }
+        set { self[ClickHapticKey.self] = newValue }
+    }
+}
+
+func hapticClick() {
+    NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+}
+
+func hapticHover() {
+    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
 }
 
 /// Icon button sized to the 28 pt desktop target, with a hover state and a spoken label.
@@ -80,10 +101,14 @@ struct IslandIconButton: View {
     var active = false
     var size: CGFloat = 28
     let action: () -> Void
+    @Environment(\.clickHaptic) private var clickHaptic
     @State private var hovering = false
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            if clickHaptic { hapticClick() }
+            action()
+        } label: {
             Image(systemName: symbol)
                 .font(.system(size: size * 0.46, weight: .semibold))
                 .foregroundStyle(active ? Color.black : (hovering ? Island.primary : tint))
@@ -95,6 +120,25 @@ struct IslandIconButton: View {
         .onHover { hovering = $0 }
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+struct VisualEffect: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .hudWindow
+    var blending: NSVisualEffectView.BlendingMode = .behindWindow
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blending
+        view.state = .active
+        view.isEmphasized = true
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = material
+        view.blendingMode = blending
     }
 }
 

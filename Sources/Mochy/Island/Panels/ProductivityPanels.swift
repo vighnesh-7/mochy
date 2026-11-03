@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -57,16 +58,18 @@ struct ShelfPanel: View {
                             Button("Clear") { withAnimation { shelf.clear() } }
                                 .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(Island.secondary)
                         }
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(shelf.items) { item in
-                                    ShelfTile(item: item, thumbnail: shelf.thumbnails[item.id])
-                                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                        GeometryReader { geo in
+                            let thumb = min(128, max(88, geo.size.height - 34))
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(alignment: .top, spacing: 12) {
+                                    ForEach(shelf.items) { item in
+                                        ShelfTile(item: item, thumbnail: shelf.thumbnails[item.id], thumbSize: thumb)
+                                            .transition(.scale(scale: 0.8).combined(with: .opacity))
+                                    }
                                 }
                             }
-                            .padding(.vertical, 2)
                         }
-                        .frame(maxHeight: .infinity)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     .padding(10)
                     .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(targeted ? Island.cardHover : Island.card))
@@ -114,26 +117,28 @@ private struct ShelfTile: View {
     @EnvironmentObject var model: AppModel
     let item: ShelfItem
     let thumbnail: NSImage?
+    var thumbSize: CGFloat = 112
     @State private var hovering = false
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             Group {
                 if let thumbnail {
-                    Image(nsImage: thumbnail).resizable().aspectRatio(contentMode: .fit)
+                    Image(nsImage: thumbnail).resizable().aspectRatio(contentMode: .fill)
                 } else {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path)).resizable().aspectRatio(contentMode: .fit)
                 }
             }
-            .frame(width: 54, height: 54)
+            .frame(width: thumbSize, height: thumbSize)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             Text(item.name)
-                .font(.system(size: 10.5))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Island.primary)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
-                .frame(width: 78)
+                .frame(width: thumbSize)
         }
-        .padding(6)
+        .padding(8)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hovering ? Color.white.opacity(0.1) : .clear))
         .overlay(alignment: .topTrailing) {
             if hovering {
@@ -143,6 +148,35 @@ private struct ShelfTile: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Remove \(item.name)")
             }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            Menu {
+                Button("Quick Look", systemImage: "eye") { FileTools.quickLook(item.url) }
+                Divider()
+                Menu("Convert to") {
+                    Button("JPEG") { convert(.jpeg) }
+                    Button("HEIC", systemImage: "photo") { convert(.heic) }
+                    Button("TIFF", systemImage: "photo") { convert(.tiff) }
+                    Button("PDF", systemImage: "doc.richtext") { convert(.pdf) }
+                }
+                Menu("Compress to") {
+                    Button("Custom…", systemImage: "slider.horizontal.3") { convert(.jpeg, quality: 0.55) }
+                }
+                Menu("Resize to") {
+                    Button("640 px", systemImage: "arrow.down.right.and.arrow.up.left") { resize(640) }
+                    Button("1024 px", systemImage: "arrow.down.right.and.arrow.up.left") { resize(1024) }
+                }
+                Button("Zip", systemImage: "archivebox") { zip() }
+            } label: {
+                Image(systemName: "ellipsis.circle.fill")
+                    .font(.system(size: 14))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Island.primary)
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 18, height: 18)
+            .opacity(hovering ? 1 : 0.85)
+            .help("More")
         }
         .onHover { hovering = $0 }
         .onDrag { NSItemProvider(contentsOf: item.url) ?? NSItemProvider() }
@@ -156,6 +190,33 @@ private struct ShelfTile: View {
         }
         .help(item.name)
         .accessibilityLabel(item.name)
+    }
+
+    private func convert(_ format: FileTools.Format, quality: Double = 0.82) {
+        do {
+            let url = try FileTools.convert(item.url, to: format, quality: quality)
+            model.shelf.add([url])
+        } catch {
+            model.shelf.report(error.localizedDescription)
+        }
+    }
+
+    private func resize(_ longest: CGFloat) {
+        do {
+            let url = try FileTools.resize(item.url, longest: longest)
+            model.shelf.add([url])
+        } catch {
+            model.shelf.report(error.localizedDescription)
+        }
+    }
+
+    private func zip() {
+        do {
+            let url = try FileTools.zip([item.url])
+            model.shelf.add([url])
+        } catch {
+            model.shelf.report(error.localizedDescription)
+        }
     }
 }
 
@@ -184,8 +245,8 @@ struct ClipboardPanel: View {
             } else {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 2) {
-                        ForEach(clipboard.filtered) { item in
-                            ClipRow(item: item, copied: copiedID == item.id, onCopy: { copy(item) }, clipboard: clipboard)
+                        ForEach(Array(clipboard.filtered.enumerated()), id: \.element.id) { index, item in
+                            ClipRow(item: item, slot: index < 9 ? index + 1 : nil, copied: copiedID == item.id, onCopy: { copy(item) }, clipboard: clipboard)
                         }
                     }
                 }
@@ -197,6 +258,7 @@ struct ClipboardPanel: View {
 
     private func copy(_ item: ClipItem) {
         clipboard.copy(item)
+        model.playPopSound()
         withAnimation(.easeOut(duration: 0.15)) { copiedID = item.id }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             if copiedID == item.id { withAnimation { copiedID = nil } }
@@ -206,6 +268,7 @@ struct ClipboardPanel: View {
 
 private struct ClipRow: View {
     let item: ClipItem
+    var slot: Int?
     let copied: Bool
     let onCopy: () -> Void
     @ObservedObject var clipboard: ClipboardService
@@ -220,6 +283,27 @@ private struct ClipRow: View {
                     .font(.system(size: 10.5)).foregroundStyle(Island.tertiary).lineLimit(1)
             }
             Spacer(minLength: 6)
+            if let url = item.openURL {
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Island.primary)
+                        .frame(width: 22, height: 22)
+                        .background(Capsule().fill(Color.white.opacity(0.16)))
+                }
+                .buttonStyle(.plain)
+                .help("Open \(url.absoluteString)")
+                .accessibilityLabel("Open Link")
+            }
+            if let slot {
+                Text("\(slot)")
+                    .font(Island.numerals(13, weight: .bold))
+                    .foregroundStyle(Island.secondary)
+                    .frame(width: 18, alignment: .trailing)
+                    .accessibilityLabel("Snippet \(slot)")
+            }
             if copied {
                 Label("Copied", systemImage: "checkmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Island.positive)
                     .transition(.opacity)
@@ -236,7 +320,7 @@ private struct ClipRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onCopy)
         .onHover { hovering = $0 }
-        .help("Click to copy")
+        .help(slot.map { "Press \($0) to paste" } ?? "Click to copy")
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(named: "Copy", onCopy)
@@ -285,88 +369,44 @@ struct SearchField: View {
 struct TodoPanel: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var todo: TodoStore
-    @ObservedObject var calendar: CalendarService
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus.circle.fill").font(.system(size: 14)).foregroundStyle(Island.focus)
-                    TextField("New To-Do", text: $draft)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Island.primary)
-                        .focused($fieldFocused)
-                        .onSubmit {
-                            todo.add(draft)
-                            draft = ""
-                        }
-                    if todo.items.contains(where: \.done) {
-                        Button("Clear Done") { withAnimation { todo.clearCompleted() } }
-                            .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(Island.secondary)
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill").font(.system(size: 14)).foregroundStyle(Island.focus)
+                TextField("New To-Do", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Island.primary)
+                    .focused($fieldFocused)
+                    .onSubmit {
+                        todo.add(draft)
+                        draft = ""
                     }
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Island.card))
-
-                if todo.items.isEmpty {
-                    EmptyState(symbol: "checklist", title: "Nothing to Do", message: "Type above and press Return.")
-                } else {
-                    ScrollView(showsIndicators: false) {
-                        LazyVStack(spacing: 4) {
-                            ForEach(todo.ordered) { TodoRow(item: $0, todo: todo, deletable: true) }
-                        }
-                    }
+                if todo.items.contains(where: \.done) {
+                    Button("Clear Done") { withAnimation { todo.clearCompleted() } }
+                        .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(Island.secondary)
                 }
             }
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Island.card))
 
-            if model.prefs.showRemindersInTodo {
-                remindersColumn.frame(width: 200)
+            if todo.items.isEmpty {
+                EmptyState(symbol: "checklist", title: "Nothing to Do", message: "Type above and press Return.")
+            } else {
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 4) {
+                        ForEach(todo.ordered) { TodoRow(item: $0, todo: todo, deletable: true) }
+                    }
+                }
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: todo.items)
         .onAppear { if model.wantsKeyboard { fieldFocused = true } }
         .onChange(of: model.focusRequest) { _, _ in fieldFocused = true }
-    }
-
-    private var remindersColumn: some View {
-        IslandCard(padding: 10) {
-            VStack(alignment: .leading, spacing: 6) {
-                SectionLabel(text: "Reminders Due Today")
-                switch calendar.reminderAccess {
-                case .granted:
-                    if calendar.reminders.isEmpty {
-                        Text("Nothing due").font(.system(size: 11.5)).foregroundStyle(Island.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        ScrollView(showsIndicators: false) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(calendar.reminders) { reminder in
-                                    HStack(spacing: 8) {
-                                        Button { calendar.complete(reminder) } label: {
-                                            Image(systemName: "circle").font(.system(size: 14)).foregroundStyle(Island.secondary)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .accessibilityLabel("Complete \(reminder.title)")
-                                        Text(reminder.title).font(.system(size: 12)).foregroundStyle(Island.primary).lineLimit(1)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                case .unknown:
-                    Spacer(minLength: 0)
-                    Button("Show Reminders") { calendar.requestReminderAccess() }.buttonStyle(PillButtonStyle())
-                    Spacer(minLength: 0)
-                case .denied:
-                    Spacer(minLength: 0)
-                    Button("Open Privacy Settings") { calendar.openPrivacySettings(reminders: true) }.buttonStyle(PillButtonStyle())
-                    Spacer(minLength: 0)
-                }
-            }
-        }
     }
 }
 
@@ -519,30 +559,103 @@ struct CalendarPanel: View {
     @ObservedObject var calendar: CalendarService
 
     var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(Date.now.formatted(.dateTime.weekday(.wide))).font(.system(size: 12, weight: .semibold)).foregroundStyle(Island.focus)
-                Text(Date.now.formatted(.dateTime.day())).font(Island.numerals(42, weight: .bold)).foregroundStyle(Island.primary)
-                Text(Date.now.formatted(.dateTime.month(.wide))).font(.system(size: 12)).foregroundStyle(Island.secondary)
-                Spacer(minLength: 0)
-                Button("Open Calendar") { calendar.openCalendarApp() }
-                    .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(Island.secondary)
-            }
-            .frame(width: 100, alignment: .leading)
+        HStack(alignment: .top, spacing: 14) {
+            MonthCalendar(calendar: calendar)
+                .frame(width: 214)
 
             IslandCard(padding: 10) {
                 CalendarAccessGate(calendar: calendar) {
-                    let events = calendar.today.filter { model.prefs.showAllDayEvents || !$0.isAllDay }
-                    let later = calendar.upcoming.filter { !Calendar.current.isDateInToday($0.start) }.prefix(3)
-                    if events.isEmpty, later.isEmpty {
-                        EmptyState(symbol: "calendar", title: "A Clear Day", message: "No events today.")
-                    } else {
-                        ScrollView(showsIndicators: false) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(events) { EventRow(event: $0, calendar: calendar, compact: false) }
-                                if !later.isEmpty {
-                                    SectionLabel(text: "Tomorrow").padding(.top, 4)
-                                    ForEach(Array(later)) { EventRow(event: $0, calendar: calendar, compact: false) }
+                    let events = calendar.events(on: calendar.selectedDay).filter { model.prefs.showAllDayEvents || !$0.isAllDay }
+                    let day = calendar.selectedDay
+                    let heading = Calendar.current.isDateInToday(day)
+                        ? "Today"
+                        : day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionLabel(text: heading)
+                        if events.isEmpty {
+                            EmptyState(
+                                symbol: "calendar",
+                                title: heading,
+                                message: Calendar.current.isDateInToday(day) ? "No events today." : "No events on this day."
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            ScrollView(showsIndicators: false) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(events) { EventRow(event: $0, calendar: calendar, compact: false) }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+            }
+            .frame(minWidth: 240)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .clipped()
+        .onAppear { calendar.focusToday() }
+    }
+}
+
+/// Month grid in the style of the Calendar widget: every day of the month is visible, today is a red circle.
+private struct MonthCalendar: View {
+    @ObservedObject var calendar: CalendarService
+
+    var body: some View {
+        let cal = Calendar.current
+        let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: calendar.displayedMonth)) ?? calendar.displayedMonth
+        let weekday = cal.component(.weekday, from: monthStart)
+        let leading = (weekday - cal.firstWeekday + 7) % 7
+        let daysInMonth = cal.range(of: .day, in: .month, for: monthStart)?.count ?? 30
+        let todayDay = cal.isDate(Date(), equalTo: monthStart, toGranularity: .month) ? cal.component(.day, from: Date()) : -1
+        let selectedDay = cal.isDate(calendar.selectedDay, equalTo: monthStart, toGranularity: .month) ? cal.component(.day, from: calendar.selectedDay) : -1
+        let weeks = monthWeeks(leading: leading, days: daysInMonth)
+        IslandCard(padding: 8, fillHeight: false) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Button { calendar.shiftMonth(-1) } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Island.secondary)
+                    .accessibilityLabel("Previous Month")
+                    Text(monthStart.formatted(.dateTime.month(.wide)))
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(monthStart.formatted(.dateTime.year()))
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundStyle(Island.secondary)
+                    Spacer(minLength: 0)
+                    Button { calendar.shiftMonth(1) } label: {
+                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Island.secondary)
+                    .accessibilityLabel("Next Month")
+                    Button { calendar.openCalendarApp() } label: {
+                        Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .bold))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Island.secondary)
+                    .accessibilityLabel("Open Calendar")
+                }
+                HStack(spacing: 0) {
+                    ForEach(Array(weekdaySymbols(cal).enumerated()), id: \.offset) { _, symbol in
+                        Text(symbol)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Island.tertiary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                VStack(spacing: 0) {
+                    ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
+                        HStack(spacing: 0) {
+                            ForEach(Array(week.enumerated()), id: \.element.id) { _, cell in
+                                Group {
+                                    if let day = cell.day {
+                                        dayButton(day, todayDay: todayDay, selectedDay: selectedDay, rowHeight: 24)
+                                    } else {
+                                        Color.clear.frame(maxWidth: .infinity).frame(height: 24)
+                                    }
                                 }
                             }
                         }
@@ -550,5 +663,58 @@ struct CalendarPanel: View {
                 }
             }
         }
+    }
+
+    private func dayButton(_ day: Int, todayDay: Int, selectedDay: Int, rowHeight: CGFloat) -> some View {
+        let isToday = day == todayDay
+        let isSelected = day == selectedDay
+        let isPast = todayDay != -1 && day < todayDay
+        return Button {
+            calendar.select(day: day)
+        } label: {
+            VStack(spacing: 2) {
+                ZStack {
+                    if isToday {
+                        Circle().fill(Color(nsColor: .systemRed))
+                    } else if isSelected {
+                        Circle().strokeBorder(Color.white.opacity(0.85), lineWidth: 1.25)
+                    }
+                    Text("\(day)")
+                        .font(.system(size: min(11, rowHeight * 0.42), weight: isToday ? .bold : .medium, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(isToday ? Color.white : Island.primary)
+                }
+                .frame(width: min(22, rowHeight - 6), height: min(22, rowHeight - 6))
+                Circle()
+                    .fill(calendar.busyDays.contains(day) ? (isToday ? Color.white.opacity(0.95) : Island.focus) : Color.clear)
+                    .frame(width: 4, height: 4)
+            }
+            .opacity(isPast && !isToday ? 0.55 : 1)
+            .frame(maxWidth: .infinity)
+            .frame(height: rowHeight)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isToday ? "Today, \(day)" : "\(day)")
+        .accessibilityAddTraits(isSelected || isToday ? .isSelected : [])
+    }
+
+    private struct DayCell: Identifiable {
+        let id: String
+        let day: Int?
+    }
+
+    private func monthWeeks(leading: Int, days: Int) -> [[DayCell]] {
+        var cells: [DayCell] = (0..<leading).map { DayCell(id: "lead-\($0)", day: nil) }
+        cells += (1...days).map { DayCell(id: "day-\($0)", day: $0) }
+        while cells.count % 7 != 0 {
+            cells.append(DayCell(id: "trail-\(cells.count)", day: nil))
+        }
+        return stride(from: 0, to: cells.count, by: 7).map { Array(cells[$0 ..< $0 + 7]) }
+    }
+
+    private func weekdaySymbols(_ calendar: Calendar) -> [String] {
+        let symbols = calendar.veryShortWeekdaySymbols
+        let start = calendar.firstWeekday - 1
+        return Array(symbols[start...] + symbols[..<start])
     }
 }

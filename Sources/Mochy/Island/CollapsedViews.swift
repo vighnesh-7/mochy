@@ -25,12 +25,13 @@ private struct ActivityEars: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            leading.frame(width: AppModel.earWidth(activity))
+            leading.frame(width: model.earWidth(activity), alignment: .leading)
             Spacer(minLength: model.notch.width)
-            trailing.frame(width: AppModel.earWidth(activity))
+            trailing.frame(width: model.earWidth(activity), alignment: .trailing)
         }
-        .frame(height: model.notch.height)
-        .padding(.horizontal, 10)
+        .frame(height: max(22, model.notch.height + CGFloat(model.prefs.activityHeightExtra)))
+        .padding(.leading, 12)
+        .padding(.trailing, 18)
         .foregroundStyle(Island.primary)
     }
 
@@ -47,8 +48,17 @@ private struct ActivityEars: View {
         case .download:
             Image(systemName: "arrow.down").font(.system(size: 12, weight: .bold)).foregroundStyle(Island.info)
         case .volume:
-            Image(systemName: model.volume.muted || model.volume.level == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: 6) {
+                Image(systemName: model.volume.muted || model.volume.level == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(model.volume.muted ? "Mute" : "\(Int(model.volume.level * 100))%")
+                    .font(Island.numerals(12))
+            }
+        case .brightness:
+            HStack(spacing: 6) {
+                Image(systemName: "sun.max.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(Island.focus)
+                Text("\(Int(model.brightness.level * 100))%").font(Island.numerals(12))
+            }
         case .caffeine:
             Image(systemName: "cup.and.saucer.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(Island.focus)
         case .charging:
@@ -75,7 +85,12 @@ private struct ActivityEars: View {
             .foregroundStyle(Island.info)
             .frame(maxWidth: .infinity, alignment: .trailing)
         case .volume:
-            Text("\(Int(model.volume.level * 100))%").font(Island.numerals(11)).foregroundStyle(Island.secondary)
+            Meter(value: Double(model.volume.level), tint: Island.primary, height: 6)
+                .frame(width: 72)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        case .brightness:
+            Meter(value: Double(model.brightness.level), tint: Color.white, height: 6)
+                .frame(width: 72)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         case .caffeine:
             Text(model.caffeine.endsAt == nil ? "On" : model.caffeine.remainingDescription)
@@ -113,7 +128,7 @@ private struct AlertBanner: View {
                 }
                 IslandIconButton(symbol: "xmark", label: "Dismiss", tint: Island.tertiary, size: 22) { model.dismissAlert() }
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 22)
             .frame(height: 62)
             .accessibilityElement(children: .contain)
         }
@@ -149,6 +164,7 @@ struct Artwork: View {
                     .background(tint)
             }
         }
+        .id(image.map(ObjectIdentifier.init))
         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 }
