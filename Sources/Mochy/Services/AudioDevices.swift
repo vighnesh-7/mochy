@@ -6,10 +6,14 @@ import IOBluetooth
 final class AudioDeviceMonitor: NSObject, ObservableObject {
     @Published private(set) var connectedName: String?
     @Published private(set) var isAirPods = false
+    @Published private(set) var symbol = "dot.radiowaves.right"
+    /// Briefly true after a device joins, so the dock chip can show a green pop.
+    @Published private(set) var showGlow = false
     @Published var announce: String?
 
     private var connectNote: IOBluetoothUserNotification?
     private var disconnectNotes: [IOBluetoothUserNotification] = []
+    private var glowToken = 0
 
     func start() {
         guard connectNote == nil else { return }
@@ -25,7 +29,6 @@ final class AudioDeviceMonitor: NSObject, ObservableObject {
     }
 
     @objc private func didConnect(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
-        guard isAudio(device) else { return }
         let note = device.register(forDisconnectNotification: self, selector: #selector(didDisconnect(_:device:)))
         if let note { disconnectNotes.append(note) }
         Task { @MainActor in
@@ -42,11 +45,10 @@ final class AudioDeviceMonitor: NSObject, ObservableObject {
     private func refresh() {
         disconnectNotes.forEach { $0.unregister() }
         disconnectNotes.removeAll()
-        let devices = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
-        let audio = devices.filter { $0.isConnected() && isAudio($0) }
-        if let first = audio.first {
+        let devices = ((IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []).filter { $0.isConnected() }
+        if let first = devices.first {
             apply(first, announce: false)
-            for device in audio {
+            for device in devices {
                 if let note = device.register(forDisconnectNotification: self, selector: #selector(didDisconnect(_:device:))) {
                     disconnectNotes.append(note)
                 }
@@ -54,20 +56,32 @@ final class AudioDeviceMonitor: NSObject, ObservableObject {
         } else {
             connectedName = nil
             isAirPods = false
+            symbol = "dot.radiowaves.right"
+            showGlow = false
         }
     }
 
     private func apply(_ device: IOBluetoothDevice, announce: Bool) {
-        let name = device.name ?? "Audio Device"
+        let name = device.name ?? "Bluetooth Device"
         connectedName = name
         isAirPods = name.localizedCaseInsensitiveContains("airpods")
-        if announce {
-            self.announce = name
+        symbol = Self.symbol(for: device)
+        guard announce else { return }
+        self.announce = name
+        showGlow = true
+        glowToken += 1
+        let token = glowToken
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_800_000_000)
+            if self.glowToken == token { self.showGlow = false }
         }
     }
 
-    private func isAudio(_ device: IOBluetoothDevice) -> Bool {
-        if (device.name ?? "").localizedCaseInsensitiveContains("airpods") { return true }
-        return device.deviceClassMajor == UInt32(kBluetoothDeviceClassMajorAudio)
+    private static func symbol(for device: IOBluetoothDevice) -> String {
+        let name = device.name ?? ""
+        if name.localizedCaseInsensitiveContains("airpods") { return "airpodspro" }
+        if device.deviceClassMajor == UInt32(kBluetoothDeviceClassMajorAudio) { return "headphones" }
+        if device.deviceClassMajor == UInt32(kBluetoothDeviceClassMajorPeripheral) { return "keyboard" }
+        return "dot.radiowaves.right"
     }
 }

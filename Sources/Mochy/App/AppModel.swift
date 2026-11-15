@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import Combine
 import CoreGraphics
 import Foundation
@@ -63,12 +62,17 @@ final class AppModel: ObservableObject {
     }
 
     @Published private(set) var isExpanded = false
+    /// The hello card shown once each time Mochy starts from a quit.
+    @Published var welcoming = true
+    var openDockClipboard: (() -> Void)?
     @Published var tab: TabID = .home
     @Published var pinned = false
     @Published var paletteOpen = false
     @Published private(set) var alert: IslandAlert?
     @Published private(set) var activity: LiveActivity?
     @Published var fileDragActive = false
+    /// True while a shelf menu or context menu is open, so the island does not collapse underneath it.
+    var menuTracking = false
     @Published var notch = NotchGeometry.fallback
     @Published var colorPickerResult: String?
     @Published var shortcutFailures: [String] = []
@@ -129,7 +133,18 @@ final class AppModel: ObservableObject {
         brightness.start()
         notes.load()
         clipboard.onInserted = { [weak self] in self?.playClipboardSound() }
-        todo.onCompleted = { [weak self] in self?.playTodoCompleteSound() }
+        todo.onAdded = { [weak self] in
+            guard let self, self.prefs.todoSoundOnAdd else { return }
+            self.playTodoAddedSound()
+        }
+        todo.onCompleted = { [weak self] in
+            guard let self, self.prefs.todoSoundOnRemove else { return }
+            self.playTodoCompleteSound()
+        }
+        todo.onRemoved = { [weak self] in
+            guard let self, self.prefs.todoSoundOnRemove else { return }
+            self.playTodoCompleteSound()
+        }
         if prefs.screenshotsToShelf { screenshots.start() }
         bindEvents()
         registerShortcuts()
@@ -157,7 +172,7 @@ final class AppModel: ObservableObject {
     static let expandedContentBottom: CGFloat = 4
 
     var islandBodySize: CGSize {
-        if isExpanded {
+        if isExpanded || welcoming {
             return CGSize(
                 width: prefs.panelSize.width + CGFloat(prefs.activityWidthExtra),
                 height: headerHeight
@@ -188,7 +203,8 @@ final class AppModel: ObservableObject {
         switch activity {
         case .media: 64
         case .caffeine, .charging: 52
-        case .timer, .download: 72
+        case .timer: 96
+        case .download: 72
         case .volume, .brightness: 88
         }
     }
@@ -223,7 +239,7 @@ final class AppModel: ObservableObject {
     }
 
     private func tabForCurrentActivity() -> TabID? {
-        if nowPlaying.hasMedia, nowPlaying.isPlaying, !nowPlaying.isBlocked(by: prefs.mediaBlacklist), prefs.tabOrder.contains(.nowPlaying) {
+        if nowPlaying.hasMedia, nowPlaying.isPlaying, nowPlaying.allowsLiveActivity(sites: prefs.mediaAllowlist), prefs.tabOrder.contains(.nowPlaying) {
             return .nowPlaying
         }
         if timer.isRunning || timer.isActive, prefs.tabOrder.contains(.timer) {
@@ -355,6 +371,7 @@ final class AppModel: ObservableObject {
         case .toggleIsland: toggleIsland()
         case .commandPalette: paletteOpen && isExpanded ? collapse() : openPalette()
         case .clipboard: toggle(tab: .clipboard, keyboard: true)
+        case .dockClipboard: openDockClipboard?()
         case .todo: toggle(tab: .todo, keyboard: true)
         case .shelf: toggle(tab: .shelf)
         case .pomodoro:
@@ -402,6 +419,10 @@ final class AppModel: ObservableObject {
         timer.longBreakMinutes = prefs.longBreakMinutes
         timer.roundsBeforeLongBreak = prefs.roundsBeforeLongBreak
         timer.autoStartNext = prefs.autoStartNextPhase
+        if todo.newestOnTop != prefs.todoNewestOnTop {
+            todo.newestOnTop = prefs.todoNewestOnTop
+            todo.objectWillChange.send()
+        }
         if timer.mode == .pomodoro, !timer.isActive { timer.reset() }
     }
 
@@ -424,7 +445,11 @@ final class AppModel: ObservableObject {
 
         nowPlaying.onTrackChange = { [weak self] title, artist in
             guard let self, self.prefs.trackChangePeek, self.prefs.mediaActivity, !self.isExpanded, self.nowPlaying.isPlaying else { return }
-            guard !self.nowPlaying.isBlocked(by: self.prefs.mediaBlacklist) else { return }
+            guard self.nowPlaying.allowsLiveActivity(sites: self.prefs.mediaAllowlist) else { return }
+            // An allowed website already has the live-activity pill. Don't also drop a track alert for it.
+            if self.nowPlaying.isWebsite { return }
+            let fields = [self.nowPlaying.title, self.nowPlaying.artist, self.nowPlaying.bundleID, self.nowPlaying.url, self.nowPlaying.pageURL]
+            if MediaFilter.blocks(entries: self.prefs.mediaAllowlist, fields: fields) { return }
             self.show(IslandAlert(style: .track, symbol: "music.note", tint: self.nowPlaying.accent, title: title, subtitle: artist.isEmpty ? self.nowPlaying.appName : artist, duration: 3))
         }
 
@@ -455,7 +480,16 @@ final class AppModel: ObservableObject {
         downloads.onFinished = { [weak self] url in
             guard let self, self.prefs.downloadActivity else { return }
             if self.prefs.downloadsToShelf { self.shelf.add([url]) }
-            self.show(IslandAlert(symbol: "arrow.down.circle.fill", tint: .blue, title: "Download Complete", subtitle: url.lastPathComponent, actionTitle: "Show", action: .reveal(url), duration: 4))
+            let shelved = self.prefs.downloadsToShelf
+            self.show(IslandAlert(
+                symbol: "arrow.down.circle.fill",
+                tint: .blue,
+                title: shelved ? "Saved to Shelf" : "Download Ready",
+                subtitle: url.lastPathComponent,
+                actionTitle: "Reveal",
+                action: .reveal(url),
+                duration: 8
+            ))
         }
 
         screenshots.onScreenshot = { [weak self] url in
@@ -466,6 +500,7 @@ final class AppModel: ObservableObject {
 
     private func everySecond() {
         nowPlaying.expireArtworkIfNeeded()
+        shelf.prune(lifetime: prefs.shelfLifetime)
         recomputeActivity()
         checkEventAlerts()
     }
@@ -495,13 +530,17 @@ final class AppModel: ObservableObject {
 
     private func recomputeActivity() {
         let next = resolveActivity()
-        if next != activity { activity = next }
+        if next != activity {
+            activity = next
+        } else if next == .timer || next == .download || next == .charging {
+            objectWillChange.send()
+        }
     }
 
     private func resolveActivity() -> LiveActivity? {
         if prefs.downloadActivity, downloads.primary != nil { return .download }
         if prefs.timerActivity, timer.isRunning || (timer.isActive && timer.mode != .stopwatch) { return .timer }
-        if prefs.alwaysShowNowPlaying, nowPlaying.hasMedia, !nowPlaying.isBlocked(by: prefs.mediaBlacklist),
+        if prefs.alwaysShowNowPlaying, nowPlaying.hasMedia, nowPlaying.allowsLiveActivity(sites: prefs.mediaAllowlist),
            nowPlaying.isPlaying || Date().timeIntervalSince(nowPlaying.lastChange) < prefs.keepPausedMediaSeconds
         {
             return .media
@@ -516,29 +555,25 @@ final class AppModel: ObservableObject {
         playSound(named: prefs.clipboardSound.rawValue)
     }
 
-    /// Copies as plain text, plays a confirmation, and pastes into the previous app when a text field is focused.
+    /// Copies as plain text onto the system clipboard and plays a confirmation.
     func pastePlainText(_ text: String) {
         let board = NSPasteboard.general
         board.clearContents()
         board.setString(text, forType: .string)
         clipboard.noteExternalChange()
         playPopSound()
-        let target = previousFrontApp
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            target?.activate(options: [.activateAllWindows])
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                guard Self.accessibilityTrusted(prompt: false), Self.focusedElementIsEditable() else { return }
-                Self.postCommandV()
-            }
-        }
     }
 
     func playPopSound() {
         playSound(named: "pop")
     }
 
+    func playTodoAddedSound() {
+        playSound(named: "wow")
+    }
+
     func playTodoCompleteSound() {
-        playSound(named: "pop")
+        playSound(named: "todo")
     }
 
     private func playSound(named name: String) {
@@ -546,66 +581,13 @@ final class AppModel: ObservableObject {
         NSSound(contentsOf: url, byReference: true)?.play()
     }
 
-    /// Slot 1 is the newest copy. Copies it, then sends Command-V to the app that was in front.
+    /// Slot 1 is the newest copy. Puts it on the system clipboard.
     func pasteClipboard(slot: Int) {
         let items = clipboard.filtered
         guard (1 ... 9).contains(slot), slot <= items.count else { return }
         clipboard.copy(items[slot - 1])
+        playPopSound()
         collapse()
-        let target = previousFrontApp
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            guard let self else { return }
-            target?.activate(options: [.activateAllWindows])
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                guard Self.accessibilityTrusted(prompt: true) else {
-                    self.show(IslandAlert(
-                        symbol: "doc.on.clipboard",
-                        tint: .white,
-                        title: "Snippet \(slot) Copied",
-                        subtitle: "Allow Mochy in Accessibility to paste with the number keys",
-                        duration: 4
-                    ))
-                    return
-                }
-                Self.postCommandV()
-            }
-        }
-    }
-
-    private static func accessibilityTrusted(prompt: Bool) -> Bool {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let options = [key: prompt] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
-    }
-
-    private static func focusedElementIsEditable() -> Bool {
-        let system = AXUIElementCreateSystemWide()
-        var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let element = focused
-        else { return false }
-        let item = element as! AXUIElement
-        var role: CFTypeRef?
-        AXUIElementCopyAttributeValue(item, kAXRoleAttribute as CFString, &role)
-        let name = (role as? String) ?? ""
-        if ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXEditableText"].contains(name) {
-            return true
-        }
-        var settable: DarwinBoolean = false
-        if AXUIElementIsAttributeSettable(item, kAXValueAttribute as CFString, &settable) == .success, settable.boolValue {
-            return true
-        }
-        return false
-    }
-
-    private static func postCommandV() {
-        let source = CGEventSource(stateID: .hidSystemState)
-        let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true)
-        let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
-        down?.flags = .maskCommand
-        up?.flags = .maskCommand
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
     }
 }
 

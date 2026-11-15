@@ -10,7 +10,7 @@ struct CollapsedIsland: View {
                 AlertBanner(alert: alert)
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
             } else if let activity = model.activity {
-                ActivityEars(activity: activity)
+                ActivityEars(activity: activity, timer: model.timer, downloads: model.downloads, battery: model.battery)
                     .transition(.opacity)
             } else {
                 Color.clear
@@ -22,6 +22,9 @@ struct CollapsedIsland: View {
 private struct ActivityEars: View {
     @EnvironmentObject var model: AppModel
     let activity: LiveActivity
+    @ObservedObject var timer: FocusTimer
+    @ObservedObject var downloads: DownloadMonitor
+    @ObservedObject var battery: BatteryMonitor
 
     var body: some View {
         HStack(spacing: 0) {
@@ -41,12 +44,20 @@ private struct ActivityEars: View {
             Artwork(image: model.nowPlaying.artwork, fallback: "music.note", tint: model.nowPlaying.accent)
                 .frame(width: model.notch.height - 10, height: model.notch.height - 10)
         case .timer:
-            HStack(spacing: 5) {
-                Ring(progress: model.timer.progress, tint: Island.focus, lineWidth: 2.5).frame(width: 14, height: 14)
-                Text(model.timer.display).font(Island.numerals(12)).foregroundStyle(Island.primary)
+            TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+                HStack(spacing: 5) {
+                    Ring(progress: timer.progress, tint: Island.focus, lineWidth: 2.5).frame(width: 14, height: 14)
+                    Text(timer.display).font(Island.numerals(12)).foregroundStyle(Island.primary)
+                        .contentTransition(.numericText())
+                        .monospacedDigit()
+                }
             }
         case .download:
-            Image(systemName: "arrow.down").font(.system(size: 12, weight: .bold)).foregroundStyle(Island.info)
+            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                Image(systemName: downloadSymbol(downloads.primary?.kind))
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Island.info)
+            }
         case .volume:
             HStack(spacing: 6) {
                 Image(systemName: model.volume.muted || model.volume.level == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
@@ -62,7 +73,9 @@ private struct ActivityEars: View {
         case .caffeine:
             Image(systemName: "cup.and.saucer.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(Island.focus)
         case .charging:
-            Image(systemName: "bolt.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(Island.positive)
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                Image(systemName: "bolt.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(Island.positive)
+            }
         }
     }
 
@@ -72,15 +85,15 @@ private struct ActivityEars: View {
             PlaybackBars(playing: model.nowPlaying.isPlaying, tint: model.nowPlaying.accent)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         case .timer:
-            Image(systemName: model.timer.isRunning ? "pause.fill" : "play.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(Island.secondary)
+            Text(timer.mode.title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Island.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         case .download:
-            Group {
-                if let fraction = model.downloads.primary?.fraction {
-                    Text("\(Int(fraction * 100))%").font(Island.numerals(11))
-                } else {
-                    Image(systemName: "ellipsis").font(.system(size: 11, weight: .bold))
-                }
+            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                DownloadReadout(item: downloads.primary)
             }
             .foregroundStyle(Island.info)
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -97,8 +110,14 @@ private struct ActivityEars: View {
                 .font(Island.numerals(11)).foregroundStyle(Island.secondary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         case .charging:
-            Text("\(model.battery.vitals.percent)%").font(Island.numerals(11)).foregroundStyle(Island.positive)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                Text("\(battery.vitals.percent)%")
+                    .font(Island.numerals(11))
+                    .foregroundStyle(Island.positive)
+                    .contentTransition(.numericText())
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 }
@@ -117,6 +136,10 @@ private struct AlertBanner: View {
                     if !alert.subtitle.isEmpty {
                         Text(alert.subtitle).font(.system(size: 11)).foregroundStyle(Island.secondary).lineLimit(1)
                     }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let action = alert.action { model.perform(action) }
                 }
                 Spacer(minLength: 8)
                 if alert.style == .track {
@@ -143,6 +166,36 @@ private struct AlertBanner: View {
                 .foregroundStyle(alert.tint)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Circle().fill(alert.tint.opacity(0.18)))
+        }
+    }
+}
+
+private func downloadSymbol(_ kind: ActiveDownload.Kind?) -> String {
+    switch kind {
+    case .airdrop: "arrow.left.arrow.right"
+    case .usb: "externaldrive.fill"
+    case .transfer: "arrow.left.arrow.right"
+    default: "arrow.down"
+    }
+}
+
+private struct DownloadReadout: View {
+    let item: ActiveDownload?
+
+    var body: some View {
+        if let item {
+            if let fraction = item.fraction, fraction > 0.005 || item.bytes == 0 {
+                Text("\(Int((fraction * 100).rounded()))%")
+                    .font(Island.numerals(11))
+                    .contentTransition(.numericText())
+                    .monospacedDigit()
+            } else if item.bytes > 0 {
+                Text(ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file))
+                    .font(Island.numerals(11))
+                    .monospacedDigit()
+            } else {
+                Image(systemName: "ellipsis").font(.system(size: 11, weight: .bold))
+            }
         }
     }
 }

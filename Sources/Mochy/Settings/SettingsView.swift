@@ -5,7 +5,7 @@ import SwiftUI
 enum SettingsPane: String, CaseIterable, Identifiable {
     case general, island, appearance, behavior, activities, shortcuts
     case home, tabs, dock
-    case nowPlaying, calendar, shelf, clipboard, pomodoro, caffeine
+    case nowPlaying, calendar, shelf, clipboard, todo, pomodoro, caffeine
     case developer, about
 
     var id: String { rawValue }
@@ -17,14 +17,15 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .appearance: "Appearance"
         case .behavior: "Behavior"
         case .activities: "Live Activities"
-        case .shortcuts: "Keyboard Shortcuts"
+        case .shortcuts: "Key Shortcuts"
         case .home: "Home Layout"
         case .tabs: "Island Order"
         case .dock: "Dock Shortcuts"
         case .nowPlaying: "Now Playing"
-        case .calendar: "Calendar & Reminders"
+        case .calendar: "Calendar"
         case .shelf: "Shelf"
         case .clipboard: "Clipboard"
+        case .todo: "To-Do"
         case .pomodoro: "Pomodoro"
         case .caffeine: "Caffeine"
         case .developer: "Developer"
@@ -47,6 +48,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .calendar: "calendar"
         case .shelf: "tray.full.fill"
         case .clipboard: "doc.on.clipboard.fill"
+        case .todo: "checklist"
         case .pomodoro: "timer"
         case .caffeine: "cup.and.saucer.fill"
         case .developer: "chevron.left.forwardslash.chevron.right"
@@ -69,6 +71,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .calendar: .red
         case .shelf: .teal
         case .clipboard: .purple
+        case .todo: .orange
         case .pomodoro: .orange
         case .caffeine: .brown
         case .developer: .green
@@ -78,14 +81,18 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     static let groups: [[SettingsPane]] = [
         [.general, .island, .appearance, .behavior, .activities, .shortcuts],
         [.home, .tabs, .dock],
-        [.nowPlaying, .calendar, .shelf, .clipboard, .pomodoro, .caffeine],
+        [.nowPlaying, .calendar, .shelf, .clipboard, .todo, .pomodoro, .caffeine],
         [.developer, .about],
     ]
 }
 
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
-    @State private var pane: SettingsPane? = .general
+    @State private var pane: SettingsPane?
+
+    init(initialPane: SettingsPane = .general) {
+        _pane = State(initialValue: initialPane)
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -137,6 +144,7 @@ private struct PaneContent: View {
             case .calendar: CalendarPane(calendar: model.calendar)
             case .shelf: ShelfPane(shelf: model.shelf)
             case .clipboard: ClipboardPane(clipboard: model.clipboard)
+            case .todo: TodoSettingsPane()
             case .pomodoro: PomodoroPane()
             case .caffeine: CaffeinePane(caffeine: model.caffeine)
             case .developer: DeveloperPane()
@@ -246,13 +254,16 @@ private struct BehaviorPane: View {
                 Toggle("Auto Collapse", isOn: $model.prefs.closeOnMouseExit)
                 SecondsSlider(title: "Collapse Delay", value: $model.prefs.closeDelay, range: 0 ... 2, step: 0.1)
                     .disabled(!model.prefs.closeOnMouseExit)
-                PrefSlider(title: "Idle Timeout", value: $model.prefs.idleTimeout, range: 0 ... 120, step: 5) { value in
+                PrefSlider(title: "Cursor on the Island", value: $model.prefs.idleTimeout, range: 0 ... 120, step: 5) { value in
                     value == 0 ? "Never" : "\(Int(value)) s"
+                }
+                PrefSlider(title: "Cursor off the Island", value: $model.prefs.idleTimeoutAway, range: 0 ... 120, step: 5) { value in
+                    value == 0 ? "Use Collapse Delay" : "\(Int(value)) s"
                 }
             } header: {
                 Text("Closing")
             } footer: {
-                Text("Auto Collapse closes the panel after the pointer leaves. Collapse Delay is the wait after the pointer leaves. Idle Timeout closes it even while the pointer rests on it; Never keeps it open while hovered.")
+                Text("Auto Collapse closes the panel after the pointer leaves. Collapse Delay is that wait when Cursor off the Island is set to Use Collapse Delay. Cursor on the Island closes it while the pointer is still resting on it; Never keeps it open while hovered. Cursor off the Island is a longer wait after the pointer leaves.")
             }
 
             Section {
@@ -333,26 +344,53 @@ private struct DockPane: View {
     var body: some View {
         Form {
             Section {
+                Toggle("Show Dock Shortcuts", isOn: $model.prefs.dockShortcutsEnabled)
                 Toggle("To-Do beside the Dock", isOn: $model.prefs.dockTodo)
                 Toggle("Clipboard beside the Dock", isOn: $model.prefs.dockClipboard)
                 Toggle("Audio Devices beside the Dock", isOn: $model.prefs.dockAudio)
             } header: {
                 Text("Dock Shortcuts")
             } footer: {
-                Text("These sit next to the Dock at Dock height — they are not Dock icons. Multiple shortcuts stack in a row. Click one for a compact glass card that closes when you click outside.")
+                Text("Show Dock Shortcuts hides every chip and restores the same chips, positions, and glass when you turn it back on. The chips sit next to the Dock at Dock height — they are not Dock icons. Click one for a compact glass card. Press Esc to close that card.")
             }
             Section {
-                PrefSlider(title: "Horizontal", value: $model.prefs.dockOffsetX, range: -250 ... 250, step: 1, unit: "pt")
-                PrefSlider(title: "Lower", value: $model.prefs.dockOffsetY, range: 0 ... 450, step: 1, unit: "pt")
+                PrefSlider(title: "Transparency", value: $model.prefs.dockIconTransparency, range: 0 ... 1, step: 0.05) { value in
+                    String(format: "%.0f%%", value * 100)
+                }
+                PrefSlider(title: "Reflection", value: $model.prefs.dockIconReflection, range: 0 ... 1, step: 0.05) { value in
+                    String(format: "%.0f%%", value * 100)
+                }
+            } header: {
+                Text("Glass")
+            } footer: {
+                Text("Transparency lets the desktop show through the shortcut icons. Reflection adds a light sheen across that glass. Both are kept when the shortcuts are hidden.")
+            }
+            Section {
+                PrefSlider(title: "Offset", value: $model.prefs.dockOffsetLeft, range: -350 ... 350, step: 1, unit: "pt")
+            } header: {
+                Text("Left Horizontal")
+            } footer: {
+                Text("Moves the Bluetooth chip on its own. Positive is to the right, negative is to the left.")
+            }
+            Section {
+                PrefSlider(title: "Offset", value: $model.prefs.dockOffsetRight, range: -350 ... 350, step: 1, unit: "pt")
+            } header: {
+                Text("Right Horizontal")
+            } footer: {
+                Text("Moves the To-Do and Clipboard chips on their own. Positive is to the right, negative is to the left.")
+            }
+            Section {
+                PrefSlider(title: "Offset", value: $model.prefs.dockOffsetY, range: 0 ... 480, step: 1, unit: "pt")
                 Button("Reset Position") {
-                    model.prefs.dockOffsetX = 0
+                    model.prefs.dockOffsetLeft = 0
+                    model.prefs.dockOffsetRight = 0
                     model.prefs.dockOffsetY = 0
                 }
-                .disabled(model.prefs.dockOffsetX == 0 && model.prefs.dockOffsetY == 0)
+                .disabled(model.prefs.dockOffsetLeft == 0 && model.prefs.dockOffsetRight == 0 && model.prefs.dockOffsetY == 0)
             } header: {
-                Text("Position")
+                Text("Lower")
             } footer: {
-                Text("At 0 the chips sit on the Dock’s baseline. Horizontal moves To-Do and Clipboard one way and the audio chip the other. Lower drops both chips down from the Dock.")
+                Text("At 0 the chips sit on the Dock’s baseline. Lower drops both groups down from the Dock, up to 480 points.")
             }
             Section {
                 PrefSlider(title: "Icon Size", value: $model.prefs.dockIconScale, range: 0.5 ... 1, step: 0.05, minLabel: "S", maxLabel: "L") { value in
@@ -409,7 +447,7 @@ private struct ActivitiesPane: View {
     }
 }
 
-private struct ShortcutsPane: View {
+struct ShortcutsPane: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
@@ -612,13 +650,13 @@ private struct NowPlayingPane: View {
                 Text("After this, a paused player leaves the notch until playback resumes. Album art for a paused session is dropped after 15 seconds so the next track cannot inherit it.")
             }
             Section {
-                ForEach(model.prefs.mediaBlacklist, id: \.self) { host in
+                ForEach(model.prefs.mediaAllowlist, id: \.self) { host in
                     HStack {
                         Text(host)
                             .lineLimit(1)
                         Spacer()
                         Button(role: .destructive) {
-                            model.prefs.mediaBlacklist.removeAll { $0 == host }
+                            model.prefs.mediaAllowlist.removeAll { $0 == host }
                         } label: {
                             Image(systemName: "minus.circle.fill")
                         }
@@ -633,30 +671,31 @@ private struct NowPlayingPane: View {
                     Label("Add Site", systemImage: "plus.circle.fill")
                 }
             } header: {
-                Text("Hidden Sites")
+                Text("Allowed Sites")
             } footer: {
-                Text("If the Now Playing title, URL or app contains one of these strings, Mochy stays quiet. Add instagram.com to ignore Reels while keeping YouTube.")
+                Text("Only these websites can open the Now Playing pill. Every other website stays off it. youtube.com also allows youtu.be, and x.com also allows Twitter. An empty list blocks every website. Music and Spotify are not websites, so they still show.")
             }
         }
-        .alert("Hide a Site", isPresented: $addingSite) {
-            TextField("instagram.com", text: $siteDraft)
-            Button("Add") { addHiddenSite() }
+        .alert("Allow a Site", isPresented: $addingSite) {
+            TextField("youtube.com", text: $siteDraft)
+            Button("Add") { addAllowedSite() }
             Button("Cancel", role: .cancel) { siteDraft = "" }
         } message: {
-            Text("Enter a site, app name, or any text that appears in Now Playing. Matching media stays off the island.")
+            Text("Enter a website. Only playback from that site can open the Now Playing live activity.")
         }
     }
 
-    private func addHiddenSite() {
+    private func addAllowedSite() {
         var value = siteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = URL(string: value), let host = url.host, !host.isEmpty {
+        if !value.contains("://") { value = "https://\(value)" }
+        if let host = URL(string: value)?.host, !host.isEmpty {
             value = host
         }
         value = value.lowercased()
         if value.hasPrefix("www.") { value = String(value.dropFirst(4)) }
         guard !value.isEmpty else { return }
-        if !model.prefs.mediaBlacklist.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) {
-            model.prefs.mediaBlacklist.append(value)
+        if !model.prefs.mediaAllowlist.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) {
+            model.prefs.mediaAllowlist.append(value)
         }
         siteDraft = ""
     }
@@ -705,6 +744,17 @@ private struct ShelfPane: View {
                 Text("AirDrop")
             } footer: {
                 Text("Drop files on the AirDrop tile in the Shelf to pick a nearby device.")
+            }
+            Section {
+                Picker("Remove After", selection: $model.prefs.shelfLifetime) {
+                    ForEach(ShelfLifetime.allCases) { lifetime in
+                        Text(lifetime.title).tag(lifetime)
+                    }
+                }
+            } header: {
+                Text("Automatic Removal")
+            } footer: {
+                Text("A shelf copy is removed after this long. Never keeps it until you clear it. Your original file is not deleted.")
             }
             Section {
                 LabeledContent("Files on the Shelf", value: "\(shelf.items.count)")
@@ -766,7 +816,7 @@ private struct ClipboardPane: View {
                         ForEach(ClipboardSound.allCases.filter { $0 != .none }) { Text($0.title).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 110)
+                    .frame(width: 140)
                     Button {
                         model.playClipboardSound()
                     } label: {
@@ -828,6 +878,68 @@ private struct ClipboardPane: View {
                 if let subtitle {
                     Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 }
+            }
+        } icon: {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(color.gradient))
+        }
+    }
+}
+
+struct TodoSettingsPane: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(isOn: $model.prefs.todoSoundOnAdd) {
+                    todoRow("speaker.wave.2.fill", .blue, "Sound When Adding", "Play a sound when you add a to-do")
+                }
+                Toggle(isOn: $model.prefs.todoSoundOnRemove) {
+                    todoRow("speaker.wave.2.fill", .teal, "Sound When Removing", "Play a sound when you tick off or delete a to-do")
+                }
+            } header: {
+                Text("Sounds")
+            }
+
+            Section {
+                Picker("New Items", selection: $model.prefs.todoNewestOnTop) {
+                    Text("Top").tag(true)
+                    Text("Bottom").tag(false)
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Sort Order")
+            } footer: {
+                Text("Top puts the newest to-do at the start of the list. Bottom puts it at the end.")
+            }
+
+            Section {
+                Toggle(isOn: $model.prefs.todoRecognizeURLs) {
+                    todoRow("link", .blue, "Recognize URLs", "An https link is shown in blue. Click the text to open it.")
+                }
+                Toggle(isOn: $model.prefs.todoTrimURLPrefix) {
+                    todoRow("textformat", .indigo, "Remove Prefix from URLs", "Hide https and www at the start of a link")
+                }
+                .disabled(!model.prefs.todoRecognizeURLs)
+                Toggle(isOn: $model.prefs.todoStripTrackers) {
+                    todoRow("link.badge.minus", .orange, "Remove Trackers from URLs", "Strip utm, fbclid and similar parameters when a to-do link is opened")
+                }
+                .disabled(!model.prefs.todoRecognizeURLs)
+            } header: {
+                Text("Links")
+            }
+        }
+    }
+
+    private func todoRow(_ symbol: String, _ color: Color, _ title: String, _ subtitle: String) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
             }
         } icon: {
             Image(systemName: symbol)
@@ -915,7 +1027,7 @@ private struct DeveloperPane: View {
     }
 }
 
-private struct AboutPane: View {
+struct AboutPane: View {
     var body: some View {
         Form {
             Section {
@@ -928,6 +1040,12 @@ private struct AboutPane: View {
                     }
                 }
                 .padding(.vertical, 4)
+            }
+            Section("Developer Details") {
+                LabeledContent("Developer", value: "Vighnesh")
+                Link("github.com/vighnesh-7", destination: URL(string: "https://github.com/vighnesh-7")!)
+                Link("Open sourced at github.com/vighnesh-7/mochy", destination: URL(string: "https://github.com/vighnesh-7/mochy")!)
+                Link("vighnesh-vangari.vercel.app", destination: URL(string: "https://vighnesh-vangari.vercel.app/")!)
             }
             Section("Good to Know") {
                 Text("Mochy doesn’t replace the system volume and brightness indicators.")

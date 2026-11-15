@@ -22,7 +22,7 @@ swiftc -parse-as-library -O -swift-version 5 \
   -framework AppKit -framework SwiftUI -framework EventKit -framework AVFoundation \
   -framework IOKit -framework CoreLocation -framework Network -framework UniformTypeIdentifiers \
   -framework Combine -framework CoreAudio -framework AudioToolbox -framework QuickLookThumbnailing \
-  -framework ServiceManagement -framework Carbon -framework CoreImage -framework ApplicationServices \
+  -framework ServiceManagement -framework Carbon -framework CoreImage -framework ApplicationServices -framework PDFKit \
   -framework IOBluetooth -framework Quartz
 
 APP="$ROOT/dist/Mochy.app"
@@ -31,6 +31,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT" "$APP/Contents/MacOS/Mochy"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$BRIDGE" "$ROOT/Resources/mediaremote.pl" "$ROOT/Resources/Mochy.icns" "$APP/Contents/Resources/"
+mkdir -p "$APP/Contents/Resources/Fonts"
+cp "$ROOT/Resources/Fonts/"*.otf "$APP/Contents/Resources/Fonts/"
 mkdir -p "$APP/Contents/Resources/Sounds"
 cp "$ROOT/Resources/Sounds/"*.wav "$APP/Contents/Resources/Sounds/"
 echo APPLMOCH > "$APP/Contents/PkgInfo"

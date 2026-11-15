@@ -83,12 +83,22 @@ struct ExpandedIsland: View {
                 CaffeineHeaderButton(caffeine: model.caffeine) {
                     model.toggleCaffeine()
                 }
+                IslandIconButton(
+                    symbol: "dock.rectangle",
+                    label: model.prefs.dockShortcutsEnabled ? "Hide Dock Shortcuts" : "Show Dock Shortcuts",
+                    active: model.prefs.dockShortcutsEnabled
+                ) {
+                    model.prefs.dockShortcutsEnabled.toggle()
+                }
                 IslandIconButton(symbol: model.pinned ? "pin.fill" : "pin", label: model.pinned ? "Unpin the Island" : "Pin the Island Open", active: model.pinned) {
                     model.pinned.toggle()
                 }
                 IslandIconButton(symbol: "gearshape.fill", label: "Settings \(shortcut(.settings))") {
                     model.collapse()
                     model.openSettings?()
+                }
+                IslandIconButton(symbol: "power", label: "Quit Mochy") {
+                    NSApp.terminate(nil)
                 }
             }
             .frame(width: sideWidth, alignment: .trailing)

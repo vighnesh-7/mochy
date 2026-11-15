@@ -32,6 +32,8 @@ final class CalendarService: ObservableObject {
     @Published private(set) var monthEvents: [AgendaEvent] = []
     /// Days of the displayed month that have at least one event.
     @Published private(set) var busyDays: Set<Int> = []
+    /// Calendar colors for events on each day of the displayed month, unique per calendar.
+    @Published private(set) var dayColors: [Int: [Color]] = [:]
     @Published var displayedMonth: Date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date())) ?? Date()
     @Published var selectedDay: Date = Calendar.current.startOfDay(for: Date())
     @Published private(set) var reminders: [DueReminder] = []
@@ -101,7 +103,7 @@ final class CalendarService: ObservableObject {
         monthEvents = events.filter { $0.start < monthEnd && $0.end > monthStart }
         today = events.filter { $0.start < endOfDay && $0.end > startOfDay }
         upcoming = events.filter { !$0.isAllDay && $0.start > Date() }
-        busyDays = Set(monthEvents.map { calendar.component(.day, from: $0.start) })
+        rebuildDayColors(calendar: calendar, monthStart: monthStart)
         if reminderAccess == .granted { refreshReminders() }
     }
 
@@ -109,6 +111,30 @@ final class CalendarService: ObservableObject {
         let calendar = Calendar.current
         selectedDay = calendar.startOfDay(for: Date())
         displayedMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: Date())) ?? displayedMonth
+    }
+
+    private func rebuildDayColors(calendar: Calendar, monthStart: Date) {
+        let monthEnd = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? monthStart
+        var map: [Int: [(String, Color)]] = [:]
+        for event in monthEvents {
+            let spanStart = max(event.start, monthStart)
+            let spanEndExclusive = min(event.end, monthEnd)
+            guard spanStart < spanEndExclusive else { continue }
+            var dayDate = calendar.startOfDay(for: spanStart)
+            let lastDay = calendar.startOfDay(for: calendar.date(byAdding: .second, value: -1, to: spanEndExclusive) ?? spanStart)
+            while dayDate <= lastDay {
+                let day = calendar.component(.day, from: dayDate)
+                var list = map[day] ?? []
+                if !list.contains(where: { $0.0 == event.calendarName }) {
+                    list.append((event.calendarName, event.color))
+                }
+                map[day] = list
+                guard let next = calendar.date(byAdding: .day, value: 1, to: dayDate) else { break }
+                dayDate = next
+            }
+        }
+        dayColors = map.mapValues { $0.map(\.1) }
+        busyDays = Set(map.keys)
     }
 
     func events(on day: Date) -> [AgendaEvent] {

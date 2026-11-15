@@ -42,6 +42,7 @@ final class BatteryMonitor: ObservableObject {
     @Published private(set) var vitals = BatteryVitals()
     var onPowerChange: ((BatteryVitals, BatteryVitals) -> Void)?
     private var source: CFRunLoopSource?
+    private var ticker: Timer?
 
     func start() {
         refresh()
@@ -51,9 +52,15 @@ final class BatteryMonitor: ObservableObject {
             let monitor = Unmanaged<BatteryMonitor>.fromOpaque(context).takeUnretainedValue()
             Task { @MainActor in monitor.refresh() }
         }, context)?.takeRetainedValue() {
-            CFRunLoopAddSource(CFRunLoopGetMain(), loop, .defaultMode)
+            CFRunLoopAddSource(CFRunLoopGetMain(), loop, .commonModes)
             source = loop
         }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+        timer.tolerance = 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        ticker = timer
         NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -82,8 +89,9 @@ final class BatteryMonitor: ObservableObject {
         }
         readRegistry(into: &next)
         next.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        guard next != previous else { return }
         vitals = next
-        if previous != next { onPowerChange?(previous, next) }
+        onPowerChange?(previous, next)
     }
 
     private func readRegistry(into vitals: inout BatteryVitals) {
@@ -101,6 +109,12 @@ final class BatteryMonitor: ObservableObject {
         if let design = vitals.designCapacity, design > 0, let max = vitals.maxCapacity {
             vitals.healthPercent = min(100, Int((Double(max) / Double(design) * 100).rounded()))
         }
+        if let current = int("AppleRawCurrentCapacity") ?? int("CurrentCapacity"),
+           let max = int("AppleRawMaxCapacity") ?? int("MaxCapacity"), max > 0
+        {
+            vitals.percent = min(100, Int((Double(current) / Double(max) * 100).rounded()))
+        }
+        if int("IsCharging") == 1 { vitals.isCharging = true }
         if let raw = int("Temperature") { vitals.temperatureC = Double(raw) / 100 }
         if let mv = int("Voltage") { vitals.voltage = Double(mv) / 1000 }
         if let number = props["Amperage"] as? NSNumber {

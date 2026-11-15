@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreText
 import SwiftUI
 
 @main
@@ -28,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let url = Bundle.main.url(forResource: "Mochy", withExtension: "icns"), let icon = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = icon
         }
+        if let font = Bundle.main.url(forResource: "MacintoshSkeletalFilled", withExtension: "otf", subdirectory: "Fonts") {
+            CTFontManagerRegisterFontsForURL(font as CFURL, .process, nil)
+        }
         model.openSettings = { [weak self] in self?.showSettings() }
 
         island = IslandController(model: model)
@@ -36,7 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let api = LocalAPI(model: model)
         api.sync()
         self.api = api
-        accessories = AccessoryChrome(model: model)
+        let accessories = AccessoryChrome(model: model)
+        model.openDockClipboard = { [weak accessories] in accessories?.presentClipboard() }
+        self.accessories = accessories
 
         model.$prefs
             .receive(on: RunLoop.main)

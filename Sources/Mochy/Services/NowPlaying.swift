@@ -19,6 +19,8 @@ final class NowPlayingService: ObservableObject {
     @Published private(set) var accent: Color = .white
     @Published private(set) var lastChange = Date.distantPast
     @Published private(set) var bridgeError: String?
+    /// Page address recovered from the browser when Now Playing itself has none.
+    @Published private(set) var pageURL = ""
 
     var onTrackChange: ((String, String) -> Void)?
 
@@ -31,16 +33,46 @@ final class NowPlayingService: ObservableObject {
     private var expiredIdentity: String?
     private var process: Process?
     private var buffer = Data()
+    private var pageLookupAt = Date.distantPast
+    private var pageLookupRunning = false
     private var restartDelay: TimeInterval = 1
     private var stopping = false
 
     var hasMedia: Bool { !title.isEmpty }
 
-    func isBlocked(by hosts: [String]) -> Bool {
-        let haystack = [url, title, artist, album, appName].joined(separator: " ").lowercased()
-        return hosts.contains { host in
-            let needle = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            return !needle.isEmpty && haystack.contains(needle)
+    /// Browser playback, including an allowed site such as YouTube.
+    var isWebsite: Bool {
+        BrowserPage.isBrowser(bundleID) || url.lowercased().contains("http") || pageURL.lowercased().contains("http")
+    }
+
+    /// Web playback opens a live activity only when its page is on the allow list. Apps that are not a website, such as Music or Spotify, are left alone.
+    func allowsLiveActivity(sites: [String]) -> Bool {
+        let page = [url, pageURL].first { $0.lowercased().contains("http") } ?? ""
+        let browser = BrowserPage.isBrowser(bundleID)
+        if page.isEmpty {
+            if browser { refreshPageIfNeeded() }
+            return !browser
+        }
+        return MediaFilter.allows(entries: sites, page: page)
+    }
+
+    private func refreshPageIfNeeded() {
+        guard Date().timeIntervalSince(pageLookupAt) > 2, !pageLookupRunning else { return }
+        guard !bundleID.isEmpty, !title.isEmpty else {
+            if !pageURL.isEmpty { pageURL = "" }
+            return
+        }
+        pageLookupAt = Date()
+        pageLookupRunning = true
+        let bundle = bundleID
+        let mediaTitle = title
+        Task.detached { [weak self] in
+            let found = BrowserPage.lookup(bundleID: bundle, mediaTitle: mediaTitle) ?? ""
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.pageLookupRunning = false
+                if self.pageURL != found { self.pageURL = found }
+            }
         }
     }
 
@@ -136,6 +168,8 @@ final class NowPlayingService: ObservableObject {
             artwork = nil
             accent = .white
             expiredIdentity = nil
+            pageURL = ""
+            pageLookupAt = .distantPast
         }
         title = newTitle
         artist = newArtist

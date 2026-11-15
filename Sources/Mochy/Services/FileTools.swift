@@ -1,17 +1,39 @@
 import AppKit
 import ImageIO
+import PDFKit
 import Quartz
 import UniformTypeIdentifiers
 
 enum FileTools {
     enum Format {
-        case jpeg, heic, tiff, pdf
+        case jpeg, jpg, png, webp, heic, tiff, pdf
         var ext: String {
             switch self {
-            case .jpeg: "jpg"
+            case .jpeg: "jpeg"
+            case .jpg: "jpg"
+            case .png: "png"
+            case .webp: "webp"
             case .heic: "heic"
             case .tiff: "tiff"
             case .pdf: "pdf"
+            }
+        }
+
+        var type: UTType {
+            switch self {
+            case .jpeg, .jpg: .jpeg
+            case .png: .png
+            case .webp: .webP
+            case .heic: .heic
+            case .tiff: .tiff
+            case .pdf: .pdf
+            }
+        }
+
+        var flattensAlpha: Bool {
+            switch self {
+            case .jpeg, .jpg: true
+            default: false
             }
         }
     }
@@ -28,41 +50,35 @@ enum FileTools {
     }
 
     static func convert(_ url: URL, to format: Format, quality: Double = 0.82) throws -> URL {
-        guard let image = NSImage(contentsOf: url) else { throw Failure.unreadable }
-        let dest = sibling(of: url, suffix: format.ext)
+        guard let image = load(url) else { throw Failure.unreadable }
+        let dest = destination(for: url, ext: format.ext)
         switch format {
         case .pdf:
             try writePDF(image, to: dest)
-        case .jpeg:
-            try writeBitmap(image, to: dest, type: .jpeg, properties: [.compressionFactor: quality])
-        case .tiff:
-            try writeBitmap(image, to: dest, type: .tiff, properties: [:])
-        case .heic:
-            try writeHEIC(image, to: dest, quality: quality)
+        default:
+            try writeRaster(image, to: dest, format: format, quality: quality)
         }
+        try validate(dest, format: format)
         return dest
     }
 
     static func resize(_ url: URL, longest: CGFloat) throws -> URL {
-        guard let image = NSImage(contentsOf: url) else { throw Failure.unreadable }
-        let size = image.size
-        let maxSide = max(size.width, size.height)
+        guard let image = load(url) else { throw Failure.unreadable }
+        let maxSide = CGFloat(max(image.width, image.height))
         guard maxSide > 0 else { throw Failure.unreadable }
-        let scale = min(1, longest / maxSide)
-        let target = NSSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
-        let resized = NSImage(size: target)
-        resized.lockFocus()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(in: NSRect(origin: .zero, size: target), from: NSRect(origin: .zero, size: size), operation: .copy, fraction: 1)
-        resized.unlockFocus()
-        let dest = sibling(of: url, suffix: "\(Int(longest)).jpg")
-        try writeBitmap(resized, to: dest, type: .jpeg, properties: [.compressionFactor: 0.85])
+        let ratio = min(1, longest / maxSide)
+        let width = max(1, Int((CGFloat(image.width) * ratio).rounded()))
+        let height = max(1, Int((CGFloat(image.height) * ratio).rounded()))
+        guard let scaled = draw(image, width: width, height: height, opaque: true) else { throw Failure.write }
+        let dest = destination(for: url, ext: "\(Int(longest)).jpg")
+        try writeRaster(scaled, to: dest, format: .jpg, quality: 0.85)
+        try validate(dest, format: .jpg)
         return dest
     }
 
     static func zip(_ urls: [URL]) throws -> URL {
         guard let first = urls.first else { throw Failure.write }
-        let dest = sibling(of: first, suffix: "zip")
+        let dest = destination(for: first, ext: "zip")
         try? FileManager.default.removeItem(at: dest)
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
@@ -77,40 +93,105 @@ enum FileTools {
         QuickLook.shared.show(url)
     }
 
-    private static func sibling(of url: URL, suffix: String) -> URL {
-        let stem = url.deletingPathExtension().lastPathComponent
-        return url.deletingLastPathComponent().appendingPathComponent("\(stem).\(suffix)")
+    // MARK: Decode
+
+    private static func load(_ url: URL) -> CGImage? {
+        let keys = [kCGImageSourceShouldCache: true] as CFDictionary
+        if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+           CGImageSourceGetCount(source) > 0,
+           let image = CGImageSourceCreateImageAtIndex(source, 0, keys)
+        {
+            return image
+        }
+        guard let ns = NSImage(contentsOf: url), ns.size.width > 0, ns.size.height > 0 else { return nil }
+        var rect = CGRect(origin: .zero, size: ns.size)
+        return ns.cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
 
-    private static func writeBitmap(_ image: NSImage, to url: URL, type: NSBitmapImageRep.FileType, properties: [NSBitmapImageRep.PropertyKey: Any]) throws {
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let data = rep.representation(using: type, properties: properties) else {
+    // MARK: Encode
+
+    private static func writeRaster(_ image: CGImage, to url: URL, format: Format, quality: Double) throws {
+        let prepared = format.flattensAlpha ? (flatten(image) ?? image) : image
+        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, format.type.identifier as CFString, 1, nil) else {
             throw Failure.write
         }
-        try data.write(to: url)
-    }
-
-    private static func writeHEIC(_ image: NSImage, to url: URL, quality: Double) throws {
-        guard let tiff = image.tiffRepresentation, let source = CGImageSourceCreateWithData(tiff as CFData, nil),
-              let cg = CGImageSourceCreateImageAtIndex(source, 0, nil)
-        else { throw Failure.unreadable }
-        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.heic.identifier as CFString, 1, nil) else { throw Failure.write }
-        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
-        CGImageDestinationAddImage(dest, cg, options as CFDictionary)
+        var options: [CFString: Any] = [:]
+        if format != .png && format != .tiff {
+            options[kCGImageDestinationLossyCompressionQuality] = quality
+        }
+        CGImageDestinationAddImage(dest, prepared, options as CFDictionary)
         guard CGImageDestinationFinalize(dest) else { throw Failure.write }
     }
 
-    private static func writePDF(_ image: NSImage, to url: URL) throws {
-        let size = image.size
-        var media = CGRect(origin: .zero, size: size)
-        guard let consumer = CGDataConsumer(url: url as CFURL),
-              let context = CGContext(consumer: consumer, mediaBox: &media, nil)
-        else { throw Failure.write }
-        context.beginPDFPage(nil)
-        if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            context.draw(cg, in: media)
+    private static func writePDF(_ image: CGImage, to url: URL) throws {
+        let pageImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        guard let page = PDFPage(image: pageImage) else { throw Failure.write }
+        let document = PDFDocument()
+        document.insert(page, at: 0)
+        guard document.write(to: url) else { throw Failure.write }
+    }
+
+    /// JPEG cannot store transparency. Draw the image onto white first so the file is a real JPEG.
+    private static func flatten(_ image: CGImage) -> CGImage? {
+        draw(image, width: image.width, height: image.height, opaque: true)
+    }
+
+    private static func draw(_ image: CGImage, width: Int, height: Int, opaque: Bool) -> CGImage? {
+        let alpha: CGImageAlphaInfo = opaque ? .noneSkipLast : .premultipliedLast
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: alpha.rawValue
+        ) else { return nil }
+        if opaque {
+            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         }
-        context.endPDFPage()
-        context.closePDF()
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
+
+    private static func destination(for url: URL, ext: String) -> URL {
+        let folder = url.deletingLastPathComponent()
+        let stem = url.deletingPathExtension().lastPathComponent
+        var candidate = folder.appendingPathComponent("\(stem).\(ext)")
+        var count = 2
+        while candidate.path == url.path || FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = folder.appendingPathComponent("\(stem)-\(count).\(ext)")
+            count += 1
+        }
+        return candidate
+    }
+
+    private static func validate(_ url: URL, format: Format) throws {
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        guard data.count > 32, magicMatches(data, format: format) else {
+            try? FileManager.default.removeItem(at: url)
+            throw Failure.write
+        }
+    }
+
+    private static func magicMatches(_ data: Data, format: Format) -> Bool {
+        let bytes = [UInt8](data.prefix(16))
+        switch format {
+        case .jpeg, .jpg:
+            return bytes.starts(with: [0xFF, 0xD8, 0xFF])
+        case .png:
+            return bytes.starts(with: [0x89, 0x50, 0x4E, 0x47])
+        case .pdf:
+            return bytes.starts(with: [0x25, 0x50, 0x44, 0x46])
+        case .webp:
+            return bytes.starts(with: [0x52, 0x49, 0x46, 0x46]) && data.count >= 12 && data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50
+        case .tiff:
+            return bytes.starts(with: [0x49, 0x49, 0x2A, 0x00]) || bytes.starts(with: [0x4D, 0x4D, 0x00, 0x2A])
+        case .heic:
+            return data.count >= 12 && data[4] == 0x66 && data[5] == 0x74 && data[6] == 0x79 && data[7] == 0x70
+        }
     }
 }
 

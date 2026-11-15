@@ -79,9 +79,12 @@ final class FocusTimer: ObservableObject {
         anchor = Date()
         anchorValue = mode == .stopwatch ? elapsed : remaining
         ticker?.invalidate()
-        ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        timer.tolerance = 0.05
+        RunLoop.main.add(timer, forMode: .common)
+        ticker = timer
     }
 
     func pause() {

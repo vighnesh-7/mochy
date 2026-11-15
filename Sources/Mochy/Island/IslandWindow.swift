@@ -21,6 +21,7 @@ final class IslandController {
     private let model: AppModel
     private let panel: IslandPanel
     private var monitors: [Any] = []
+    private var menuObservers: [NSObjectProtocol] = []
     private var bag = Set<AnyCancellable>()
     private var openWork: DispatchWorkItem?
     private var closeWork: DispatchWorkItem?
@@ -65,6 +66,8 @@ final class IslandController {
     func teardown() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
+        menuObservers.forEach(NotificationCenter.default.removeObserver)
+        menuObservers.removeAll()
         panel.orderOut(nil)
     }
 
@@ -127,6 +130,20 @@ final class IslandController {
         if let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
             MainActor.assumeIsolated { self?.clickedOutside() }
         }) { monitors.append(down) }
+        let began = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.model.menuTracking = true
+                self?.cancelClose()
+            }
+        }
+        let ended = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.model.menuTracking = self.menuWindowOpen()
+                if !self.model.menuTracking { self.scheduleCloseIfNeeded() }
+            }
+        }
+        menuObservers.append(contentsOf: [began, ended])
         if let localDown = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in
             MainActor.assumeIsolated {
                 self?.dragChangeCount = NSPasteboard(name: .drag).changeCount
@@ -158,6 +175,7 @@ final class IslandController {
             let characters = event.charactersIgnoringModifiers ?? ""
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let handled = MainActor.assumeIsolated {
+                if self.editingCommand(code: code, flags: flags) { return true }
                 if code == 53, let number, self.escapePressed(inWindow: number) { return true }
                 if self.commandKey(code: code, characters: characters, flags: flags, window: number) { return true }
                 return self.snippetKey(characters, flags: flags, window: number)
@@ -177,15 +195,31 @@ final class IslandController {
         guard hoverRect.contains(NSEvent.mouseLocation) else { return false }
         guard abs(deltaY) > 10, abs(deltaY) > abs(deltaX) * 1.2 else { return false }
         if deltaY < 0 {
-            guard model.isExpanded, !model.pinned else { return false }
+            guard model.isExpanded, !model.pinned, !model.menuTracking else { return false }
             model.collapse()
             if model.prefs.hapticFeedback { hapticHover() }
             return true
         }
-        guard !model.isExpanded else { return false }
+        guard !model.isExpanded, !model.welcoming else { return false }
         model.expand()
         if model.prefs.hapticFeedback { hapticHover() }
         return true
+    }
+
+    /// Cmd-V, Cmd-C, Cmd-X and Cmd-A. An agent app has no Edit menu, so text fields never receive these on their own.
+    private func editingCommand(code: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
+        guard flags.contains(.command), flags.isDisjoint(with: [.control, .option]) else { return false }
+        let action: Selector
+        switch code {
+        case 9: action = #selector(NSText.paste(_:))
+        case 8: action = #selector(NSText.copy(_:))
+        case 7: action = #selector(NSText.cut(_:))
+        case 0: action = #selector(NSText.selectAll(_:))
+        default: return false
+        }
+        guard let responder = NSApp.keyWindow?.firstResponder else { return false }
+        guard responder is NSTextView || responder is NSTextField else { return false }
+        return NSApp.sendAction(action, to: nil, from: nil)
     }
 
     private func commandKey(code: UInt16, characters: String, flags: NSEvent.ModifierFlags, window: Int?) -> Bool {
@@ -244,6 +278,7 @@ final class IslandController {
         updateClickThrough(point)
         if dragging { detectFileDrag(at: point) }
 
+        if model.welcoming { return }
         if hoverRect.contains(point) {
             cancelClose()
             if model.isExpanded {
@@ -261,6 +296,12 @@ final class IslandController {
                 openWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + model.prefs.hoverDelay, execute: work)
             }
+        } else if menuWindowOpen() {
+            model.menuTracking = true
+            cancelClose()
+        } else if menuWindowOpen() {
+            model.menuTracking = true
+            cancelClose()
         } else {
             openWork?.cancel()
             openWork = nil
@@ -268,16 +309,26 @@ final class IslandController {
         }
     }
 
+    private func menuWindowOpen() -> Bool {
+        NSApp.windows.contains { window in
+            guard window.isVisible else { return false }
+            let name = window.className
+            return name.contains("NSMenu") || name.contains("ContextMenu")
+        }
+    }
+
     private func scheduleCloseIfNeeded() {
-        guard model.isExpanded, pointerVisited, model.prefs.closeOnMouseExit, !model.pinned, !model.paletteOpen, !model.fileDragActive, closeWork == nil else { return }
+        guard model.isExpanded, pointerVisited, model.prefs.closeOnMouseExit, !model.pinned, !model.paletteOpen, !model.fileDragActive, !model.menuTracking, closeWork == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.closeWork = nil
-            guard !self.hoverRect.contains(NSEvent.mouseLocation), !self.model.pinned, !self.model.paletteOpen, !self.panel.isKeyWindow || !self.model.wantsKeyboard else { return }
+            guard !self.model.menuTracking, !self.hoverRect.contains(NSEvent.mouseLocation), !self.model.pinned, !self.model.paletteOpen, !self.panel.isKeyWindow || !self.model.wantsKeyboard else { return }
             self.model.collapse()
         }
         closeWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + model.prefs.closeDelay, execute: work)
+        let away = model.prefs.idleTimeoutAway
+        let delay = away > 0 ? away : model.prefs.closeDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func cancelClose() {
@@ -289,9 +340,9 @@ final class IslandController {
         idleWork?.cancel()
         idleWork = nil
         let timeout = model.prefs.idleTimeout
-        guard timeout > 0, model.isExpanded, !model.pinned else { return }
+        guard timeout > 0, model.isExpanded, !model.pinned, !model.menuTracking else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.model.isExpanded, !self.model.pinned else { return }
+            guard let self, self.model.isExpanded, !self.model.pinned, !self.model.menuTracking else { return }
             self.model.collapse()
         }
         idleWork = work
@@ -301,7 +352,7 @@ final class IslandController {
     /// Clicks in other apps arrive here; a click outside the open island closes it unless it's pinned.
     private func clickedOutside() {
         dragChangeCount = NSPasteboard(name: .drag).changeCount
-        guard model.isExpanded, !model.pinned, !islandRect.contains(NSEvent.mouseLocation) else { return }
+        guard model.isExpanded, !model.pinned, !model.menuTracking, !islandRect.contains(NSEvent.mouseLocation) else { return }
         model.collapse()
     }
 

@@ -319,11 +319,13 @@ struct TodoCard: View {
                     Spacer()
                     Text("\(todo.openCount) left").font(Island.numerals(11, weight: .medium)).foregroundStyle(Island.tertiary)
                 }
-                let open = todo.ordered.filter { !$0.done }.prefix(4)
-                if open.isEmpty {
+                let done = todo.ordered.filter(\.done)
+                let open = todo.ordered.filter { !$0.done }
+                let rows = Array(done.prefix(4)) + Array(open.prefix(max(0, 4 - min(done.count, 4))))
+                if rows.isEmpty {
                     Text("All done").font(.system(size: 12)).foregroundStyle(Island.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ForEach(Array(open)) { item in
+                    ForEach(rows) { item in
                         TodoRow(item: item, todo: todo)
                     }
                     Spacer(minLength: 0)

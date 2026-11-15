@@ -1,51 +1,58 @@
 # Mochy
 
-A notch utility for macOS 14+ that turns the camera housing into a Dynamic Island. Its feature set is modeled on Notchy 2.0, but Mochy is an original implementation. It contains no Notchy code, artwork, sounds, update keys, analytics or licensing.
+![Mochy](docs/images/app-icon.png)
 
-## What's in the island
+A notch utility for macOS 14 and later. It sits in the camera housing and opens into a panel for what's playing, the calendar, files, clipboard history, to-dos, and timers. [Vighnesh](https://github.com/vighnesh-7) develops it. The source is at [github.com/vighnesh-7/mochy](https://github.com/vighnesh-7/mochy). The portfolio is at [vighnesh-vangari.vercel.app](https://vighnesh-vangari.vercel.app/).
 
-**Beside the notch (live activities).** The most time-sensitive activity wins:
+Each launch from quit writes “hello” across a black card the size of the island, in Macintosh Skeletal, then settles into the pill.
 
-- volume
-- download progress
-- Pomodoro or timer
-- now playing (artwork and moving bars in the album color)
-- caffeine
-- charging
+![Hello](docs/images/welcome.png)
 
-**Alerts drop out of the notch** for:
+## Island
 
-- new tracks
-- plugging in, unplugging, fully charged, and low battery at 20%, 10% and 5%
-- upcoming calendar events, with a **Join** button for Zoom, Meet, Teams, Webex and FaceTime links
-- finished downloads
-- Pomodoro phase changes
-- files added to the Shelf
+The closed pill shows one live activity at a time: download progress (including AirDrop, file transfers, and copies onto a USB drive), a Pomodoro, timer, or stopwatch, now playing, caffeine, or charging. The timer and the battery percent keep moving while the pill is closed.
 
-**Expanded tabs.** Hover over or click the notch to open it. Tabs sit left of the camera; Command Palette, Pin and Settings sit to the right.
+Hover or click the notch to open the panel. Tabs sit to the left of the camera. The command palette, now playing, caffeine, dock shortcuts, pin, settings, and quit sit to the right. The dock-shortcut button uses the same dock icon as Settings. Swipe up to collapse and swipe down to expand. Press Esc to close the palette or the island. Two idle timers are separate: one while the pointer rests on the island, and one after it leaves.
 
 | Tab | What it does |
 | --- | --- |
-| Home | Up to four cards: Now Playing, Today, Quick Controls (caffeine, focus, pin, color picker), To-Do, Battery, System, Weather |
-| Shelf | Drop files to park them, drag them back out, or drop them on **AirDrop** |
-| Clipboard | Searchable history of text, links and files; pin items; click to copy |
-| To-Do | Quick list, plus Reminders due today |
-| Pomodoro | Pomodoro, countdown and stopwatch, with rounds, +1 min and skip |
-| Calendar | Today's agenda and tomorrow's first events |
-| System | CPU sparkline, memory, network, storage, and battery vitals (health, cycles, temperature, watts, adapter) |
+| Home | Up to four cards: Now Playing, Today, Quick Controls, To-Do, Battery, System, Weather |
+| Shelf | Park files, drag them back out, convert images and PDFs, or hand them to AirDrop. Finished items can leave the shelf on their own after 5 minutes, 10 minutes, 30 minutes, or an hour |
+| Clipboard | Searchable history. Click a row to copy it. Sounds include Pop, Click, Bubble, Chime, Glass, Bell, Note, Water Drop, and Cash |
+| To-Do | A short list. Adding an item can play a sound, and ticking one off can play another. An https link turns blue; click the text to open it. Settings can hide the https and www prefix, strip tracking parameters, and put new items at the top or the bottom. A ticked item stays, struck through, until the island closes |
+| Pomodoro | Pomodoro, countdown, and stopwatch |
+| Calendar | A month you can move through, with each event's calendar color. Days with more than one calendar use a split dot |
+| System |   battery details |
 
-Notes, Calculator, Search, Launcher, Emoji and Mirror can be turned on in Settings › Tabs, and every tab is always available from the Command Palette.
+Notes, Calculator, Search, Launcher, Emoji, and Mirror can be turned on in Settings › Tabs.
 
-## Keyboard shortcuts
+![The expanded island](docs/images/island.png)
 
-All shortcuts are global and can be changed in Settings › Keyboard Shortcuts. They use Carbon hot keys, so Accessibility access isn't needed.
+## Dock shortcuts
+
+To-Do, Clipboard, and a connected Bluetooth device can sit beside the Dock. They are not Dock icons. Left and right chips move independently, from −350 to 350 points, and both can drop as far as 480 points below the Dock. Transparency and reflection control how much of the desktop shows through the glass.
+
+One switch hides every chip and puts the same chips, positions, and glass back when you turn it on. That switch is also on the island, next to caffeine. Click a chip for its card. Press Esc to close the card.
+
+![Dock shortcuts beside the Dock](docs/images/dock.png)
+
+## Now playing
+
+Mochy reads the system Now Playing session, the same one Control Center uses. Music, Spotify, and other apps that are not a website still show. A website shows only when it is on the allow list in Settings. `youtube.com` also covers `youtu.be`, and `x.com` also covers Twitter. An empty list blocks every website. A new-track alert is not shown for a site on that list; the pill is enough.
+
+Since macOS 15.4, only Apple-entitled processes may read that session. Mochy ships a small Objective-C bridge (`Native/MediaRemoteBridge.m`) loaded by `/usr/bin/perl`. A future macOS update could close that session.
+
+## Key shortcuts
+
+Shortcuts are global and can be changed in Settings › Key Shortcuts. They use Carbon hot keys.
 
 | Shortcut | Action |
 | --- | --- |
 | ⌃⌥Space | Open or close the island |
 | ⌃⌥K | Command palette |
-| ⌃⌥C | Clipboard history (search field focused) |
-| ⌃⌥T | To-Do (new item field focused) |
+| ⌃⌥C | Dock clipboard |
+| ⌃⌥⇧C | Clipboard history |
+| ⌃⌥T | To-Do |
 | ⌃⌥S | Shelf |
 | ⌃⌥P | Start or pause Pomodoro |
 | ⌃⌥A | Toggle caffeine |
@@ -53,13 +60,9 @@ All shortcuts are global and can be changed in Settings › Keyboard Shortcuts. 
 | ⌃⌥M | Play or pause media |
 | ⌃⌥, | Settings |
 
-Press Esc in the island to close the palette, or the island itself.
+![Key Shortcuts](docs/images/settings-shortcuts.png)
 
-## Now Playing
-
-Mochy reads the system Now Playing session, the same one Control Center uses. It works with Music, Spotify, Podcasts, and video in Safari or Chrome, including YouTube.
-
-Since macOS 15.4, only Apple-entitled processes may read that session. Mochy therefore ships a small Objective-C bridge (`Native/MediaRemoteBridge.m`), which is loaded by `/usr/bin/perl`, an entitled system binary. The bridge streams JSON to the app. It uses the same approach as the open-source *mediaremote-adapter* project, and a future macOS update could close it.
+![Settings](docs/images/settings.png)
 
 ## Build
 
@@ -71,13 +74,9 @@ cd ~/Desktop/mochy
 open dist/Mochy.app
 ```
 
-`build.sh` compiles the bridge with `clang` and the app with `swiftc`. It then assembles `dist/Mochy.app` and ad-hoc signs it. Open at Login needs the app to be in `/Applications`.
-
-`Tools/Snapshot.swift` renders island states to PNG files for design review. It isn't part of the app.
+`build.sh` compiles the bridge with `clang` and the app with `swiftc`, assembles `dist/Mochy.app`, and ad-hoc signs it. Launch at Login needs the app in `/Applications`.
 
 ## URL scheme and local API
-
-The URL scheme accepts these addresses:
 
 - `mochy://open`
 - `mochy://close`
@@ -87,7 +86,7 @@ The URL scheme accepts these addresses:
 - `mochy://caffeine`
 - `mochy://tab/<home|shelf|clipboard|todo|timer|calendar|stats|…>`
 
-The local API is off by default; turn it on in Settings › Developer. It only accepts connections from this Mac.
+The local API is off by default. Turn it on in Settings › Developer. It only accepts connections from this Mac.
 
 ```bash
 curl -H "X-Mochy-Token: TOKEN" http://127.0.0.1:9999/status
@@ -98,7 +97,7 @@ curl -X POST -H "X-Mochy-Token: TOKEN" http://127.0.0.1:9999/expand -d '{"tab":"
 
 ## Limitations
 
-- Mochy doesn't replace the system volume and brightness indicators.
-- CPU and GPU temperatures aren't shown; they need private SMC sensors.
-- The following are left out by design: charge limiting, fan control, external-display brightness (DDC), Face Unlock and the desktop pet.
+- Mochy does not replace the system volume and brightness indicators.
+- CPU and GPU temperatures are not shown.
+- Charge limiting, fan control, external-display brightness, and Face Unlock are not included.
 - Clipboard history skips items that apps mark as concealed or transient, such as password managers.

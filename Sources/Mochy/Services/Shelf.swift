@@ -59,6 +59,18 @@ final class ShelfService: ObservableObject {
         load()
     }
 
+    func prune(lifetime: ShelfLifetime) {
+        guard let seconds = lifetime.seconds else { return }
+        let cutoff = Date().addingTimeInterval(-seconds)
+        let stale = items.filter { $0.added < cutoff }
+        guard !stale.isEmpty else { return }
+        for item in stale {
+            try? FileManager.default.removeItem(at: item.url.deletingLastPathComponent())
+            thumbnails[item.id] = nil
+        }
+        load()
+    }
+
     func clear() {
         items.forEach { try? FileManager.default.removeItem(at: $0.url.deletingLastPathComponent()) }
         thumbnails.removeAll()

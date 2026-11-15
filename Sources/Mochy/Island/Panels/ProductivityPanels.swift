@@ -61,7 +61,7 @@ struct ShelfPanel: View {
                         GeometryReader { geo in
                             let thumb = min(128, max(88, geo.size.height - 34))
                             ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(alignment: .top, spacing: 12) {
+                                HStack(alignment: .top, spacing: 28) {
                                     ForEach(shelf.items) { item in
                                         ShelfTile(item: item, thumbnail: shelf.thumbnails[item.id], thumbSize: thumb)
                                             .transition(.scale(scale: 0.8).combined(with: .opacity))
@@ -138,23 +138,34 @@ private struct ShelfTile: View {
                 .multilineTextAlignment(.center)
                 .frame(width: thumbSize)
         }
-        .padding(8)
+        .padding(.horizontal, 14)
+        .padding(.top, 16)
+        .padding(.bottom, 8)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hovering ? Color.white.opacity(0.1) : .clear))
         .overlay(alignment: .topTrailing) {
             if hovering {
                 Button { model.shelf.remove(item) } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 14)).foregroundStyle(Island.secondary)
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white, Color.black.opacity(0.72))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .padding(4)
                 .accessibilityLabel("Remove \(item.name)")
             }
         }
+        .zIndex(hovering ? 1 : 0)
         .overlay(alignment: .bottomTrailing) {
             Menu {
                 Button("Quick Look", systemImage: "eye") { FileTools.quickLook(item.url) }
                 Divider()
                 Menu("Convert to") {
                     Button("JPEG") { convert(.jpeg) }
+                    Button("JPG") { convert(.jpg) }
+                    Button("PNG") { convert(.png) }
+                    Button("WebP") { convert(.webp) }
                     Button("HEIC", systemImage: "photo") { convert(.heic) }
                     Button("TIFF", systemImage: "photo") { convert(.tiff) }
                     Button("PDF", systemImage: "doc.richtext") { convert(.pdf) }
@@ -421,16 +432,12 @@ struct TodoRow: View {
             Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { todo.toggle(item) } } label: {
                 Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 15))
-                    .foregroundStyle(item.done ? Island.positive : Island.secondary)
+                    .foregroundStyle(item.done ? Color.green : Island.secondary)
                     .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(item.done ? "Mark \(item.title) as not done" : "Complete \(item.title)")
-            Text(item.title)
-                .font(.system(size: 12))
-                .strikethrough(item.done, color: Island.tertiary)
-                .foregroundStyle(item.done ? Island.tertiary : Island.primary)
-                .lineLimit(1)
+            TodoTitle(title: item.title, done: item.done, size: 12)
             Spacer(minLength: 4)
             if deletable, hovering {
                 IslandIconButton(symbol: "trash", label: "Delete", size: 22) { todo.delete(item) }
@@ -442,6 +449,36 @@ struct TodoRow: View {
             if deletable { RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Island.cardHover : Island.card) }
         }
         .onHover { hovering = $0 }
+    }
+}
+
+struct TodoTitle: View {
+    @EnvironmentObject var model: AppModel
+    let title: String
+    var done = false
+    var size: CGFloat = 12
+
+    var body: some View {
+        let link = model.prefs.todoRecognizeURLs ? TodoStore.Link.httpsURL(in: title) : nil
+        let shown = TodoStore.Link.display(title, trimPrefix: link != nil && model.prefs.todoTrimURLPrefix)
+        let label = Text(shown)
+            .font(.system(size: size))
+            .strikethrough(done, color: Island.tertiary)
+            .foregroundStyle(done ? Island.tertiary : (link == nil ? Island.primary : Color.blue))
+            .lineLimit(2)
+        if link != nil {
+            Button {
+                if let url = TodoStore.Link.opening(title, stripTrackers: model.prefs.todoStripTrackers) {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                label
+            }
+            .buttonStyle(.plain)
+            .help(title)
+        } else {
+            label
+        }
     }
 }
 
@@ -685,9 +722,8 @@ private struct MonthCalendar: View {
                         .foregroundStyle(isToday ? Color.white : Island.primary)
                 }
                 .frame(width: min(22, rowHeight - 6), height: min(22, rowHeight - 6))
-                Circle()
-                    .fill(calendar.busyDays.contains(day) ? (isToday ? Color.white.opacity(0.95) : Island.focus) : Color.clear)
-                    .frame(width: 4, height: 4)
+                EventColorDot(colors: calendar.dayColors[day] ?? [])
+                    .frame(width: 6, height: 6)
             }
             .opacity(isPast && !isToday ? 0.55 : 1)
             .frame(maxWidth: .infinity)
@@ -716,5 +752,40 @@ private struct MonthCalendar: View {
         let symbols = calendar.veryShortWeekdaySymbols
         let start = calendar.firstWeekday - 1
         return Array(symbols[start...] + symbols[..<start])
+    }
+}
+
+private struct EventColorDot: View {
+    let colors: [Color]
+
+    var body: some View {
+        let slices = Array(colors.prefix(4))
+        Group {
+            if slices.isEmpty {
+                Color.clear
+            } else if slices.count == 1 {
+                Circle().fill(slices[0])
+            } else {
+                Canvas { context, size in
+                    let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                    let radius = min(size.width, size.height) / 2
+                    let step = 360.0 / Double(slices.count)
+                    for (index, color) in slices.enumerated() {
+                        var path = Path()
+                        path.move(to: center)
+                        path.addArc(
+                            center: center,
+                            radius: radius,
+                            startAngle: .degrees(-90 + step * Double(index)),
+                            endAngle: .degrees(-90 + step * Double(index + 1)),
+                            clockwise: false
+                        )
+                        path.closeSubpath()
+                        context.fill(path, with: .color(color))
+                    }
+                }
+            }
+        }
+        .clipShape(Circle())
     }
 }

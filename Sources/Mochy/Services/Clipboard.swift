@@ -26,6 +26,19 @@ enum ClipLink {
         let hostOK = host.allSatisfy { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" }
         return hostOK ? url : nil
     }
+
+    static func withoutTrackers(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let resolved = url(from: trimmed) else { return text }
+        guard var parts = URLComponents(url: resolved, resolvingAgainstBaseURL: false) else { return text }
+        let tracking: Set<String> = ["fbclid", "gclid", "dclid", "msclkid", "igshid", "mc_cid", "mc_eid", "yclid", "_hsenc", "_hsmi", "si"]
+        parts.queryItems = parts.queryItems?.filter { item in
+            let name = item.name.lowercased()
+            return !name.hasPrefix("utm_") && !tracking.contains(name)
+        }
+        if parts.queryItems?.isEmpty == true { parts.queryItems = nil }
+        return parts.string ?? text
+    }
 }
 
 @MainActor
@@ -89,7 +102,7 @@ final class ClipboardService: ObservableObject {
         } else if var text = board.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let link = ClipLink.url(from: text) != nil
             if link, stripTrackers {
-                let cleaned = Self.removeTrackers(text)
+                let cleaned = ClipLink.withoutTrackers(text)
                 if cleaned != text {
                     text = cleaned
                     board.clearContents()
@@ -117,7 +130,7 @@ final class ClipboardService: ObservableObject {
         changeCount = NSPasteboard.general.changeCount
     }
 
-    /// Puts an item back on the pasteboard and refreshes its recency. Pasting into another app is AppModel's job.
+    /// Puts an item back on the pasteboard and refreshes its recency.
     func copy(_ item: ClipItem) {
         let board = NSPasteboard.general
         board.clearContents()
@@ -158,16 +171,4 @@ final class ClipboardService: ObservableObject {
         }
     }
 
-    private static func removeTrackers(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let resolved = ClipLink.url(from: trimmed) else { return text }
-        guard var parts = URLComponents(url: resolved, resolvingAgainstBaseURL: false) else { return text }
-        let tracking: Set<String> = ["fbclid", "gclid", "dclid", "msclkid", "igshid", "mc_cid", "mc_eid", "yclid", "_hsenc", "_hsmi", "si"]
-        parts.queryItems = parts.queryItems?.filter { item in
-            let name = item.name.lowercased()
-            return !name.hasPrefix("utm_") && !tracking.contains(name)
-        }
-        if parts.queryItems?.isEmpty == true { parts.queryItems = nil }
-        return parts.string ?? text
-    }
 }

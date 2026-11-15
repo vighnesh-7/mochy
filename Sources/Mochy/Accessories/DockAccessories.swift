@@ -42,11 +42,7 @@ struct CompactTodoCard: View {
                                         .foregroundStyle(item.done ? Color.green : .secondary)
                                 }
                                 .buttonStyle(.plain)
-                                Text(item.title)
-                                    .font(.system(size: 12.5))
-                                    .strikethrough(item.done)
-                                    .foregroundStyle(item.done ? .secondary : .primary)
-                                    .lineLimit(2)
+                                TodoTitle(title: item.title, done: item.done, size: 12.5)
                                 Spacer(minLength: 0)
                             }
                             .padding(.horizontal, 6)
@@ -77,23 +73,11 @@ struct CompactClipboardCard: View {
                     VStack(spacing: 4) {
                         ForEach(Array(clipboard.filtered.prefix(9).enumerated()), id: \.element.id) { index, item in
                             HStack(spacing: 6) {
-                                Button {
-                                    if let onPick {
-                                        onPick(item)
-                                    } else {
-                                        clipboard.copy(item)
-                                    }
-                                } label: {
-                                    HStack {
-                                        Text(item.text)
-                                            .font(.system(size: 12))
-                                            .lineLimit(2)
-                                            .foregroundStyle(.primary)
-                                        Spacer()
-                                        Text("\(index + 1)").font(.system(size: 12, weight: .bold).monospacedDigit()).foregroundStyle(.secondary)
-                                    }
-                                }
-                                .buttonStyle(.plain)
+                                Text(item.text)
+                                    .font(.system(size: 12))
+                                    .lineLimit(2)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 if let url = item.openURL {
                                     Button {
                                         NSWorkspace.shared.open(url)
@@ -107,10 +91,31 @@ struct CompactClipboardCard: View {
                                     .help("Open link")
                                     .accessibilityLabel("Open Link")
                                 }
+                                Text("\(index + 1)")
+                                    .font(.system(size: 12, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if let onPick {
+                                    onPick(item)
+                                } else {
+                                    clipboard.copy(item)
+                                }
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityAction(named: "Copy") {
+                                if let onPick {
+                                    onPick(item)
+                                } else {
+                                    clipboard.copy(item)
+                                }
+                            }
                         }
                     }
                 }
@@ -127,7 +132,10 @@ struct GlassChip: View {
     let label: String
     var badge: String?
     var tint: Color = .white
+    var glow = false
     var size: CGFloat = 56
+    var transparency: Double = 0.35
+    var reflection: Double = 0.45
     let action: () -> Void
 
     var body: some View {
@@ -142,10 +150,28 @@ struct GlassChip: View {
                     .frame(width: icon, height: icon)
                     .background {
                         VisualEffect(material: .hudWindow, blending: .behindWindow)
-                        RoundedRectangle(cornerRadius: radius, style: .continuous).fill(.white.opacity(0.08))
+                            .opacity(1 - transparency * 0.85)
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(.white.opacity(0.14 * (1 - transparency)))
                     }
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(.white.opacity(0.22), lineWidth: 0.8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        .white.opacity(0.55 * reflection),
+                                        .white.opacity(0.05 * reflection),
+                                        .clear,
+                                        .white.opacity(0.18 * reflection)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .allowsHitTesting(false)
+                    }
+                    .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(.white.opacity(0.22 * (1 - transparency * 0.4)), lineWidth: 0.8))
                     .padding(pad)
                 if let badge {
                     Text(badge)
@@ -155,13 +181,32 @@ struct GlassChip: View {
                         .background(Capsule().fill(Color.red))
                         .foregroundStyle(.white)
                         .padding(3)
+                } else if glow {
+                    ConnectGlow()
+                        .padding(6)
                 }
             }
             .frame(width: size, height: size)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+private struct ConnectGlow: View {
+    @State private var lit = false
+
+    var body: some View {
+        Circle()
+            .fill(Color.green)
+            .frame(width: 11, height: 11)
+            .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 1))
+            .shadow(color: .green.opacity(lit ? 0.95 : 0.35), radius: lit ? 8 : 2)
+            .scaleEffect(lit ? 1.15 : 0.8)
+            .onAppear { withAnimation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true)) { lit = true } }
+            .accessibilityLabel("Device connected")
     }
 }
 
@@ -205,6 +250,8 @@ final class AccessoryChrome {
     private var todoItem: NSStatusItem?
     private var clipboardItem: NSStatusItem?
     private var menuTargets: [StatusClick] = []
+    private var escapeMonitor: Any?
+    private var armOutside: DispatchWorkItem?
 
     init(model: AppModel) {
         self.model = model
@@ -235,8 +282,25 @@ final class AccessoryChrome {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.syncDock() }
             .store(in: &bag)
+        NotificationCenter.default.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.syncDock() }
+            .store(in: &bag)
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.syncDock() }
+            .store(in: &bag)
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53, let self, self.popover?.isVisible == true else { return event }
+            self.dismissPopover()
+            return nil
+        }
         syncMenuBar()
         syncDock()
+    }
+
+    func presentClipboard() {
+        togglePopover(.clipboard)
     }
 
     func teardown() {
@@ -246,6 +310,8 @@ final class AccessoryChrome {
         if let todoItem { NSStatusBar.system.removeStatusItem(todoItem) }
         if let clipboardItem { NSStatusBar.system.removeStatusItem(clipboardItem) }
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        escapeMonitor = nil
     }
 
     // MARK: Menu bar
@@ -280,6 +346,12 @@ final class AccessoryChrome {
     // MARK: Dock chips
 
     private func syncDock() {
+        guard model.prefs.dockShortcutsEnabled else {
+            rightPanel?.orderOut(nil)
+            leftPanel?.orderOut(nil)
+            dismissPopover()
+            return
+        }
         let screen = NSScreen.main ?? NSScreen.screens[0]
         let dock = DockGeometry.frame(on: screen)
         let scale = CGFloat(min(max(model.prefs.dockIconScale, 0.5), 1))
@@ -288,7 +360,8 @@ final class AccessoryChrome {
         let chipSize: CGFloat = 56 * scale
         let gap: CGFloat = 14
         let vis = screen.visibleFrame
-        let shiftX = CGFloat(model.prefs.dockOffsetX)
+        let shiftLeft = CGFloat(model.prefs.dockOffsetLeft)
+        let shiftRight = CGFloat(model.prefs.dockOffsetRight)
         let lower = CGFloat(model.prefs.dockOffsetY)
         let alignedY: CGFloat
         let alignedLeftX: CGFloat
@@ -328,23 +401,36 @@ final class AccessoryChrome {
             let panel = reuse(&rightPanel, size: CGSize(width: width, height: panelH))
             let view = HStack(spacing: 4) {
                 ForEach(Array(right.enumerated()), id: \.offset) { _, item in
-                    GlassChip(symbol: item.symbol, label: item.label, badge: item.badge, size: chipSize, action: item.action)
+                    GlassChip(
+                        symbol: item.symbol,
+                        label: item.label,
+                        badge: item.badge,
+                        size: chipSize,
+                        transparency: self.model.prefs.dockIconTransparency,
+                        reflection: self.model.prefs.dockIconReflection,
+                        action: item.action
+                    )
                 }
             }
             .environment(\.colorScheme, .dark)
-            host(view, in: panel)
-            let x = clampX(clampX(alignedRightX(width), width: width) + shiftX, width: width)
+            host(view, in: panel, card: false)
+            let x = clampX(clampX(alignedRightX(width), width: width) + shiftRight, width: width)
             panel.setFrame(NSRect(x: x, y: y, width: width, height: panelH), display: true)
             panel.orderFrontRegardless()
         }
 
-        if model.prefs.dockAudio {
+        if model.prefs.dockAudio, let name = audio.connectedName {
             let panel = reuse(&leftPanel, size: CGSize(width: chipW, height: panelH))
-            let name = audio.connectedName ?? "Bluetooth"
-            host(GlassChip(symbol: "airpodspro", label: name, size: chipSize, action: { [weak self] in
-                self?.showAudioBanner(name)
-            }).environment(\.colorScheme, .dark), in: panel)
-            let x = clampX(clampX(alignedLeftX, width: chipW) - shiftX, width: chipW)
+            host(GlassChip(
+                symbol: audio.symbol,
+                label: name,
+                glow: audio.showGlow,
+                size: chipSize,
+                transparency: model.prefs.dockIconTransparency,
+                reflection: model.prefs.dockIconReflection,
+                action: { [weak self] in self?.showAudioBanner(name) }
+            ).environment(\.colorScheme, .dark), in: panel, card: false)
+            let x = clampX(clampX(alignedLeftX, width: chipW) + shiftLeft, width: chipW)
             panel.setFrame(NSRect(x: x, y: y, width: chipW, height: panelH), display: true)
             panel.orderFrontRegardless()
         } else {
@@ -390,7 +476,7 @@ final class AccessoryChrome {
         panel.level = .popUpMenu
         switch kind {
         case .todo:
-            host(CompactTodoCard(todo: model.todo).environment(\.colorScheme, .dark), in: panel)
+            host(CompactTodoCard(todo: model.todo).environmentObject(model).environment(\.colorScheme, .dark), in: panel)
         case .clipboard:
             host(CompactClipboardCard(clipboard: model.clipboard, onPick: { [weak self] item in
                 self?.pickClipboard(item)
@@ -410,12 +496,21 @@ final class AccessoryChrome {
         installOutside()
     }
 
+    private func clickIsOnDockChrome(_ point: NSPoint) -> Bool {
+        if let popover, popover.frame.contains(point) { return true }
+        if let rightPanel, rightPanel.frame.contains(point) { return true }
+        if let leftPanel, leftPanel.frame.contains(point) { return true }
+        return false
+    }
+
     private func pickClipboard(_ item: ClipItem) {
         dismissPopover()
         model.pastePlainText(item.text)
     }
 
     private func dismissPopover() {
+        armOutside?.cancel()
+        armOutside = nil
         popover?.orderOut(nil)
         model.todo.commitCompleted()
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
@@ -424,9 +519,22 @@ final class AccessoryChrome {
 
     private func installOutside() {
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
-        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            MainActor.assumeIsolated { self?.dismissPopover() }
+        outsideMonitor = nil
+        armOutside?.cancel()
+        // Wait until the opening click has finished. Installing during that click
+        // was closing the card before it could appear, until the app was relaunched.
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.popover?.isVisible == true else { return }
+            self.outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if self.clickIsOnDockChrome(NSEvent.mouseLocation) { return }
+                    self.dismissPopover()
+                }
+            }
         }
+        armOutside = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
     private func reuse(_ slot: inout NSPanel?, size: CGSize) -> NSPanel {
@@ -434,7 +542,8 @@ final class AccessoryChrome {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
+        panel.level = .statusBar
+        panel.ignoresMouseEvents = false
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.isMovable = false
@@ -444,20 +553,43 @@ final class AccessoryChrome {
         return panel
     }
 
-    private func host<V: View>(_ view: V, in panel: NSPanel) {
-        let wrapped = view
-            .background {
-                VisualEffect(material: .hudWindow)
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.black.opacity(0.25))
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        panel.contentView = NSHostingView(rootView: wrapped)
+    private func host<V: View>(_ view: V, in panel: NSPanel, card: Bool = true) {
+        let wrapped: AnyView
+        if card {
+            wrapped = AnyView(view
+                .background {
+                    VisualEffect(material: .hudWindow)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.black.opacity(0.25))
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous)))
+            panel.hasShadow = true
+        } else {
+            wrapped = AnyView(view)
+            panel.hasShadow = false
+        }
+        if let existing = panel.contentView as? FirstMouseHostingView<AnyView> {
+            existing.rootView = wrapped
+        } else {
+            panel.contentView = FirstMouseHostingView(rootView: wrapped)
+        }
+        panel.ignoresMouseEvents = false
     }
 }
 
 private final class AccessoryPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown {
+            makeKey()
+        }
+        super.sendEvent(event)
+    }
+}
+
+private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool { true }
 }
 
 enum DockGeometry {

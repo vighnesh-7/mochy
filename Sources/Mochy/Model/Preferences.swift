@@ -110,7 +110,7 @@ enum HomeCardID: String, CaseIterable, Identifiable, Codable {
 }
 
 enum ShortcutID: String, CaseIterable, Identifiable, Codable {
-    case toggleIsland, commandPalette, clipboard, todo, shelf, pomodoro, caffeine, pin, playPause, settings
+    case toggleIsland, commandPalette, clipboard, dockClipboard, todo, shelf, pomodoro, caffeine, pin, playPause, settings
 
     var id: String { rawValue }
 
@@ -119,6 +119,7 @@ enum ShortcutID: String, CaseIterable, Identifiable, Codable {
         case .toggleIsland: "Open or Close the Island"
         case .commandPalette: "Command Palette"
         case .clipboard: "Clipboard History"
+        case .dockClipboard: "Dock Clipboard"
         case .todo: "To-Do"
         case .shelf: "Shelf"
         case .pomodoro: "Start or Pause Pomodoro"
@@ -134,7 +135,8 @@ enum ShortcutID: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .toggleIsland: return KeyCombo(keyCode: UInt32(kVK_Space), modifiers: ctrlOpt)
         case .commandPalette: return KeyCombo(keyCode: UInt32(kVK_ANSI_K), modifiers: ctrlOpt)
-        case .clipboard: return KeyCombo(keyCode: UInt32(kVK_ANSI_C), modifiers: ctrlOpt)
+        case .clipboard: return KeyCombo(keyCode: UInt32(kVK_ANSI_C), modifiers: ctrlOpt | UInt32(shiftKey))
+        case .dockClipboard: return KeyCombo(keyCode: UInt32(kVK_ANSI_C), modifiers: ctrlOpt)
         case .todo: return KeyCombo(keyCode: UInt32(kVK_ANSI_T), modifiers: ctrlOpt)
         case .shelf: return KeyCombo(keyCode: UInt32(kVK_ANSI_S), modifiers: ctrlOpt)
         case .pomodoro: return KeyCombo(keyCode: UInt32(kVK_ANSI_P), modifiers: ctrlOpt)
@@ -239,7 +241,7 @@ enum PanelSize: String, CaseIterable, Identifiable, Codable {
 }
 
 enum ClipboardSound: String, CaseIterable, Identifiable, Codable {
-    case none, pop, click, bubble
+    case none, pop, click, bubble, chime, glass, bell, note, water, cash
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -247,6 +249,12 @@ enum ClipboardSound: String, CaseIterable, Identifiable, Codable {
         case .pop: "Pop"
         case .click: "Click"
         case .bubble: "Bubble"
+        case .chime: "Chime"
+        case .glass: "Glass"
+        case .bell: "Bell"
+        case .note: "Note"
+        case .water: "Water Drop"
+        case .cash: "Cash"
         }
     }
 }
@@ -266,13 +274,17 @@ enum CursorStyle: String, CaseIterable, Identifiable, Codable {
 }
 
 enum TranslucencyProfile: String, CaseIterable, Identifiable, Codable {
-    case graphite, carbon, satin
+    case graphite, carbon, satin, slate, ink, ocean, dusk
     var id: String { rawValue }
     var title: String {
         switch self {
         case .graphite: "Graphite"
         case .carbon: "Carbon"
         case .satin: "Satin"
+        case .slate: "Slate"
+        case .ink: "Ink"
+        case .ocean: "Ocean"
+        case .dusk: "Dusk"
         }
     }
 
@@ -281,6 +293,10 @@ enum TranslucencyProfile: String, CaseIterable, Identifiable, Codable {
         case .graphite: "Dense charcoal glass"
         case .carbon: "Near-black, like the camera housing"
         case .satin: "Soft warm dark"
+        case .slate: "Cool gray glass"
+        case .ink: "Blue-black"
+        case .ocean: "Deep teal"
+        case .dusk: "Dim violet"
         }
     }
 
@@ -289,6 +305,10 @@ enum TranslucencyProfile: String, CaseIterable, Identifiable, Codable {
         case .graphite: Color(white: 0.14).opacity(0.94)
         case .carbon: Color.black.opacity(0.96)
         case .satin: Color(red: 0.13, green: 0.11, blue: 0.12).opacity(0.9)
+        case .slate: Color(red: 0.16, green: 0.18, blue: 0.2).opacity(0.92)
+        case .ink: Color(red: 0.04, green: 0.06, blue: 0.12).opacity(0.94)
+        case .ocean: Color(red: 0.03, green: 0.12, blue: 0.14).opacity(0.92)
+        case .dusk: Color(red: 0.12, green: 0.08, blue: 0.16).opacity(0.92)
         }
     }
 
@@ -297,6 +317,10 @@ enum TranslucencyProfile: String, CaseIterable, Identifiable, Codable {
         case .graphite: .sidebar
         case .carbon: .hudWindow
         case .satin: .menu
+        case .slate: .popover
+        case .ink: .underWindowBackground
+        case .ocean: .headerView
+        case .dusk: .sheet
         }
     }
 }
@@ -330,6 +354,30 @@ extension NSScreen {
     }
 }
 
+enum ShelfLifetime: String, CaseIterable, Identifiable, Codable {
+    case never, five, ten, thirty, hour
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .never: "Never"
+        case .five: "5 Minutes"
+        case .ten: "10 Minutes"
+        case .thirty: "30 Minutes"
+        case .hour: "1 Hour"
+        }
+    }
+
+    var seconds: TimeInterval? {
+        switch self {
+        case .never: nil
+        case .five: 5 * 60
+        case .ten: 10 * 60
+        case .thirty: 30 * 60
+        case .hour: 60 * 60
+        }
+    }
+}
+
 enum CaffeineDuration: Int, CaseIterable, Identifiable, Codable {
     case indefinitely = 0, fifteenMinutes = 15, oneHour = 60, twoHours = 120, fourHours = 240
     var id: Int { rawValue }
@@ -358,6 +406,8 @@ struct Preferences: Codable, Equatable {
     var closeOnMouseExit = true
     var closeDelay: Double = 0.9
     var idleTimeout: Double = 0
+    /// Closes the island after the pointer has been away. Zero keeps the shorter collapse delay.
+    var idleTimeoutAway: Double = 0
     var openOnCurrentActivity = false
     var defaultTab: TabID = .home
     var islandScreen: IslandScreen = .all
@@ -400,7 +450,8 @@ struct Preferences: Codable, Equatable {
     // Now playing
     var artworkTint = true
     var keepPausedMediaSeconds: Double = 20
-    var mediaBlacklist: [String] = ["instagram.com", "instagram"]
+    /// Websites that may open the Now Playing pill. Every other website stays off it.
+    var mediaAllowlist: [String] = []
 
     // Calendar
     var showAllDayEvents = true
@@ -408,8 +459,18 @@ struct Preferences: Codable, Equatable {
     var dockTodo = false
     var dockClipboard = false
     var dockAudio = true
-    /// Positive X moves the right-hand chips (To-Do / Clipboard) right and the left-hand chip left.
+    /// Hides every dock chip without clearing which chips, positions, or glass settings were chosen.
+    var dockShortcutsEnabled = true
+    /// How much of the desktop shows through a dock chip. 0 is solid glass, 1 is clear.
+    var dockIconTransparency: Double = 0.35
+    /// Strength of the light sheen across the chip.
+    var dockIconReflection: Double = 0.45
+    /// Kept so an older single horizontal offset can be split into the left and right sliders.
     var dockOffsetX: Double = 0
+    /// Positive moves the Bluetooth chip to the right.
+    var dockOffsetLeft: Double = 0
+    /// Positive moves the To-Do and Clipboard chips to the right.
+    var dockOffsetRight: Double = 0
     /// Points to drop the chips below the Dock baseline.
     var dockOffsetY: Double = 0
     /// 1 is the default chip size; lower values shrink the dock shortcuts.
@@ -420,6 +481,8 @@ struct Preferences: Codable, Equatable {
     var removeAfterAirDrop = false
     var screenshotsToShelf = false
     var downloadsToShelf = false
+    /// How long a shelf copy stays before Mochy removes it. Never leaves files until you clear them.
+    var shelfLifetime: ShelfLifetime = .never
 
     // Clipboard
     var clipboardHistory = true
@@ -427,6 +490,14 @@ struct Preferences: Codable, Equatable {
     var clipboardPersist = true
     var stripLinkTrackers = false
     var clipboardSound: ClipboardSound = .pop
+
+    // To-Do
+    var todoSoundOnAdd = true
+    var todoSoundOnRemove = true
+    var todoRecognizeURLs = true
+    var todoTrimURLPrefix = true
+    var todoStripTrackers = false
+    var todoNewestOnTop = true
 
     var cursorStyle: CursorStyle = .system
 
@@ -461,10 +532,19 @@ struct Preferences: Codable, Equatable {
     }
 
     static func load() -> Preferences {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let decoded = try? JSONDecoder().decode(Preferences.self, from: data)
-        else { return Preferences() }
-        return decoded
+        if let data = UserDefaults.standard.data(forKey: storageKey),
+           let decoded = try? JSONDecoder().decode(Preferences.self, from: data)
+        {
+            return decoded
+        }
+        if let url = Bundle.main.url(forResource: "SeedPreferences", withExtension: "json"),
+           let data = try? Data(contentsOf: url),
+           let decoded = try? JSONDecoder().decode(Preferences.self, from: data)
+        {
+            decoded.save()
+            return decoded
+        }
+        return Preferences()
     }
 
     func save() {
@@ -493,6 +573,7 @@ extension Preferences {
         take(.closeOnMouseExit, &closeOnMouseExit)
         take(.closeDelay, &closeDelay)
         take(.idleTimeout, &idleTimeout)
+        take(.idleTimeoutAway, &idleTimeoutAway)
         take(.openOnCurrentActivity, &openOnCurrentActivity)
         take(.defaultTab, &defaultTab)
         take(.islandScreen, &islandScreen)
@@ -528,27 +609,49 @@ extension Preferences {
         take(.homeCards, &homeCards)
         take(.artworkTint, &artworkTint)
         take(.keepPausedMediaSeconds, &keepPausedMediaSeconds)
-        take(.mediaBlacklist, &mediaBlacklist)
-        mediaBlacklist = mediaBlacklist.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        take(.mediaAllowlist, &mediaAllowlist)
+        mediaAllowlist = mediaAllowlist.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         take(.showAllDayEvents, &showAllDayEvents)
         take(.showRemindersInTodo, &showRemindersInTodo)
         take(.dockTodo, &dockTodo)
         take(.dockClipboard, &dockClipboard)
         take(.dockAudio, &dockAudio)
+        take(.dockShortcutsEnabled, &dockShortcutsEnabled)
+        take(.dockIconTransparency, &dockIconTransparency)
+        take(.dockIconReflection, &dockIconReflection)
+        dockIconTransparency = min(max(dockIconTransparency, 0), 1)
+        dockIconReflection = min(max(dockIconReflection, 0), 1)
         take(.dockOffsetX, &dockOffsetX)
+        if c.contains(.dockOffsetLeft) {
+            take(.dockOffsetLeft, &dockOffsetLeft)
+            take(.dockOffsetRight, &dockOffsetRight)
+        } else {
+            dockOffsetLeft = -dockOffsetX
+            dockOffsetRight = dockOffsetX
+        }
+        dockOffsetLeft = min(max(dockOffsetLeft, -350), 350)
+        dockOffsetRight = min(max(dockOffsetRight, -350), 350)
         take(.dockOffsetY, &dockOffsetY)
         if dockOffsetY < 0 { dockOffsetY = 0 }
+        if dockOffsetY > 480 { dockOffsetY = 480 }
         take(.dockIconScale, &dockIconScale)
         dockIconScale = min(max(dockIconScale, 0.5), 1)
         take(.openShelfOnFileDrag, &openShelfOnFileDrag)
         take(.removeAfterAirDrop, &removeAfterAirDrop)
         take(.screenshotsToShelf, &screenshotsToShelf)
         take(.downloadsToShelf, &downloadsToShelf)
+        take(.shelfLifetime, &shelfLifetime)
         take(.clipboardHistory, &clipboardHistory)
         take(.clipboardLimit, &clipboardLimit)
         take(.clipboardPersist, &clipboardPersist)
         take(.stripLinkTrackers, &stripLinkTrackers)
         take(.clipboardSound, &clipboardSound)
+        take(.todoSoundOnAdd, &todoSoundOnAdd)
+        take(.todoSoundOnRemove, &todoSoundOnRemove)
+        take(.todoRecognizeURLs, &todoRecognizeURLs)
+        take(.todoTrimURLPrefix, &todoTrimURLPrefix)
+        take(.todoStripTrackers, &todoStripTrackers)
+        take(.todoNewestOnTop, &todoNewestOnTop)
         take(.cursorStyle, &cursorStyle)
         take(.focusMinutes, &focusMinutes)
         take(.shortBreakMinutes, &shortBreakMinutes)
@@ -558,7 +661,17 @@ extension Preferences {
         take(.timerSound, &timerSound)
         take(.caffeineKeepsDisplayOn, &caffeineKeepsDisplayOn)
         take(.caffeineDefault, &caffeineDefault)
-        take(.shortcuts, &shortcuts)
+        if let saved = try? c.decode(StoredShortcuts.self, forKey: .shortcuts) {
+            shortcuts = saved.values
+        }
+        if shortcuts[.dockClipboard] == nil {
+            let ctrlOpt = UInt32(controlKey | optionKey)
+            let dockCopy = KeyCombo(keyCode: UInt32(kVK_ANSI_C), modifiers: ctrlOpt)
+            shortcuts[.dockClipboard] = dockCopy
+            if shortcuts[.clipboard] == dockCopy {
+                shortcuts[.clipboard] = KeyCombo(keyCode: UInt32(kVK_ANSI_C), modifiers: ctrlOpt | UInt32(shiftKey))
+            }
+        }
         take(.apiEnabled, &apiEnabled)
         take(.apiPort, &apiPort)
         take(.apiToken, &apiToken)
@@ -573,5 +686,21 @@ extension Preferences {
         if defaultTab == .stats { defaultTab = .home }
         homeCards = homeCards.filter { $0 != .system }
         if homeCards.isEmpty { homeCards = [.nowPlaying, .calendar, .controls] }
+    }
+}
+
+/// Reads saved shortcuts and drops ones this version no longer has, such as the removed window moves.
+private struct StoredShortcuts: Decodable {
+    let values: [ShortcutID: KeyCombo]
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var values: [ShortcutID: KeyCombo] = [:]
+        while !container.isAtEnd {
+            let key = try container.decode(String.self)
+            let combo = try container.decode(KeyCombo.self)
+            if let id = ShortcutID(rawValue: key) { values[id] = combo }
+        }
+        self.values = values
     }
 }
