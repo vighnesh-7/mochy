@@ -1,8 +1,15 @@
 # Mochy
 
-![Mochy](docs/images/app-icon.png)
-
-A notch utility for macOS 14 and later. It sits in the camera housing and opens into a panel for what's playing, the calendar, files, clipboard history, to-dos, and timers. [Vighnesh](https://github.com/vighnesh-7) develops it. The source is at [github.com/vighnesh-7/mochy](https://github.com/vighnesh-7/mochy). The portfolio is at [vighnesh-vangari.vercel.app](https://vighnesh-vangari.vercel.app/).
+<table>
+  <tr>
+    <td width="140">
+      <img src="docs/images/app-icon.png" width="120" alt="Mochy" />
+    </td>
+    <td style="font-size: 16px;">
+      &nbsp;&nbsp;&nbsp;&nbsp;A notch utility for macOS 14 and later. It sits in the camera housing and opens into a panel for what's playing, the calendar, files, clipboard history, to-dos, and timers.
+    </td>
+  </tr>
+</table> 
 
 Each launch from quit writes “hello” across a black card the size of the island, in Macintosh Skeletal, then settles into the pill.
 
@@ -22,7 +29,7 @@ Hover or click the notch to open the panel. Tabs sit to the left of the camera. 
 | To-Do | A short list. Adding an item can play a sound, and ticking one off can play another. An https link turns blue; click the text to open it. Settings can hide the https and www prefix, strip tracking parameters, and put new items at the top or the bottom. A ticked item stays, struck through, until the island closes |
 | Pomodoro | Pomodoro, countdown, and stopwatch |
 | Calendar | A month you can move through, with each event's calendar color. Days with more than one calendar use a split dot |
-| System |   battery details |
+| System |   Battery details |
 
 Notes, Calculator, Search, Launcher, Emoji, and Mirror can be turned on in Settings › Tabs.
 
