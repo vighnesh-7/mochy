@@ -117,11 +117,23 @@ final class FocusTimer: ObservableObject {
         setTotal(countdownLength)
     }
 
-    func addMinute() {
+    /// Adds or removes minutes. A running timer that reaches zero finishes.
+    func adjust(minutes: Double) {
         guard mode != .stopwatch else { return }
-        remaining += 60
-        total += 60
-        if isRunning { anchor = Date(); anchorValue = remaining }
+        let delta = minutes * 60
+        remaining = max(0, remaining + delta)
+        if delta >= 0 {
+            total += delta
+        } else {
+            total = max(remaining, total + delta)
+        }
+        guard isRunning else { return }
+        if remaining == 0 {
+            finish()
+        } else {
+            anchor = Date()
+            anchorValue = remaining
+        }
     }
 
     func skipPhase() {
@@ -146,7 +158,12 @@ final class FocusTimer: ObservableObject {
     }
 
     private func finish() {
-        pause()
+        // Stop the ticker before announcing. pause() reads the clock again, and that
+        // used to see a finished timer and call finish() until the app crashed.
+        isRunning = false
+        anchor = nil
+        ticker?.invalidate()
+        ticker = nil
         switch mode {
         case .countdown:
             onPhaseEnd?("Timer Done", "\(Int(total / 60)) minute timer finished")

@@ -289,7 +289,10 @@ private struct ClipRow: View {
         HStack(spacing: 10) {
             Image(systemName: symbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(Island.secondary).frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.text.trimmingCharacters(in: .whitespacesAndNewlines)).font(.system(size: 12)).foregroundStyle(Island.primary).lineLimit(1)
+                Text(item.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.system(size: 12))
+                    .foregroundStyle(item.openURL == nil ? Island.primary : Color.blue)
+                    .lineLimit(1)
                 Text([item.sourceApp, item.copiedAt.formatted(.relative(presentation: .named))].compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 10.5)).foregroundStyle(Island.tertiary).lineLimit(1)
             }
@@ -437,14 +440,22 @@ struct TodoRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(item.done ? "Mark \(item.title) as not done" : "Complete \(item.title)")
-            TodoTitle(title: item.title, done: item.done, size: 12)
+            VStack(alignment: .leading, spacing: 1) {
+                TodoTitle(title: item.title, done: item.done, size: 12)
+                if deletable {
+                    Text(item.created.formatted(.relative(presentation: .named)))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Island.tertiary)
+                        .lineLimit(1)
+                }
+            }
             Spacer(minLength: 4)
             if deletable, hovering {
                 IslandIconButton(symbol: "trash", label: "Delete", size: 22) { todo.delete(item) }
             }
         }
         .padding(.horizontal, deletable ? 10 : 0)
-        .frame(height: deletable ? 30 : 22)
+        .frame(height: deletable ? 40 : 22)
         .background {
             if deletable { RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Island.cardHover : Island.card) }
         }
@@ -512,11 +523,32 @@ struct TimerPanel: View {
                             Circle().fill(index <= timer.round ? Island.focus : Color.white.opacity(0.18)).frame(width: 7, height: 7)
                         }
                     }
-                } else if timer.mode == .countdown, !timer.isActive {
-                    HStack(spacing: 6) {
-                        ForEach([5, 10, 15, 25, 45], id: \.self) { minutes in
-                            Button("\(minutes)m") { timer.setCountdown(minutes: Double(minutes)) }
-                                .buttonStyle(ChipStyle(selected: Int(timer.total / 60) == minutes))
+                } else if timer.mode == .countdown, !timer.isRunning {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach([5, 10, 15, 25], id: \.self) { minutes in
+                                countdownChip(minutes)
+                            }
+                        }
+                        HStack(spacing: 6) {
+                            ForEach([30, 45, 60], id: \.self) { minutes in
+                                countdownChip(minutes)
+                            }
+                            Button("Focus") { timer.setCountdown(minutes: model.prefs.focusMinutes) }
+                                .buttonStyle(ChipStyle(selected: Int(timer.total / 60) == Int(model.prefs.focusMinutes)))
+                        }
+                    }
+                }
+
+                if timer.mode != .stopwatch {
+                    HStack(spacing: 4) {
+                        ForEach([15, 10, 5], id: \.self) { minutes in
+                            Button("+\(minutes)") { timer.adjust(minutes: Double(minutes)) }
+                                .buttonStyle(ChipStyle())
+                        }
+                        ForEach([-5, -10, -15], id: \.self) { minutes in
+                            Button("\(minutes)") { timer.adjust(minutes: Double(minutes)) }
+                                .buttonStyle(ChipStyle())
                         }
                     }
                 }
@@ -527,9 +559,6 @@ struct TimerPanel: View {
                         .buttonStyle(PillButtonStyle(tint: tint))
                         .keyboardShortcut(.space, modifiers: [])
                     IslandIconButton(symbol: "arrow.counterclockwise", label: "Reset") { timer.reset() }
-                    if timer.mode != .stopwatch {
-                        IslandIconButton(symbol: "plus", label: "Add One Minute") { timer.addMinute() }
-                    }
                     if timer.mode == .pomodoro {
                         IslandIconButton(symbol: "forward.end.fill", label: "Skip to Next Phase") { timer.skipPhase() }
                     }
@@ -542,6 +571,11 @@ struct TimerPanel: View {
 
     private var tint: Color {
         timer.mode == .pomodoro && timer.phase != .focus ? Island.positive : Island.focus
+    }
+
+    private func countdownChip(_ minutes: Int) -> some View {
+        Button(minutes == 60 ? "1h" : "\(minutes)m") { timer.setCountdown(minutes: Double(minutes)) }
+            .buttonStyle(ChipStyle(selected: Int(timer.total / 60) == minutes))
     }
 }
 

@@ -31,6 +31,8 @@ final class IslandController {
     private var pointerVisited = false
     private var dragChangeCount = NSPasteboard(name: .drag).changeCount
     private var screen: NSScreen?
+    /// A fullscreen app owns the display, so the notch stays out of the way.
+    private var hiddenForFullscreen = false
 
     init(model: AppModel) {
         self.model = model
@@ -80,8 +82,11 @@ final class IslandController {
         if model.notch != geometry { model.notch = geometry }
         let frame = target.frame
         panel.setFrame(NSRect(x: frame.midX - Self.canvas.width / 2, y: frame.maxY - Self.canvas.height, width: Self.canvas.width, height: Self.canvas.height), display: true)
-        panel.orderFrontRegardless()
-        updateClickThrough(NSEvent.mouseLocation)
+        applyFullscreen()
+        if !hiddenForFullscreen {
+            panel.orderFrontRegardless()
+            updateClickThrough(NSEvent.mouseLocation)
+        }
     }
 
     private func chooseScreen() -> NSScreen {
@@ -108,6 +113,49 @@ final class IslandController {
         // A slightly generous target around the closed notch, extended a little below it.
         let rect = islandRect
         return NSRect(x: rect.minX - 10, y: rect.minY - 6, width: rect.width + 20, height: rect.height + 6)
+    }
+
+    /// Fullscreen apps cover the display. The island stays hidden, and moving toward the camera does not open it.
+    private func applyFullscreen() {
+        let hide = screenIsFullscreen()
+        if hide {
+            hiddenForFullscreen = true
+            openWork?.cancel()
+            openWork = nil
+            if model.isExpanded { model.collapse() }
+            panel.ignoresMouseEvents = true
+            panel.orderOut(nil)
+        } else if hiddenForFullscreen {
+            hiddenForFullscreen = false
+            panel.orderFrontRegardless()
+            updateClickThrough(NSEvent.mouseLocation)
+        }
+    }
+
+    private func screenIsFullscreen() -> Bool {
+        guard let screen else { return false }
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+        let display = screen.frame
+        let primary = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens[0]
+        for window in list {
+            let owner = window[kCGWindowOwnerName as String] as? String ?? ""
+            if ["Dock", "Window Server", "Mochy", "Control Center", "Notification Center", "WindowManager"].contains(owner) { continue }
+            let layer = window[kCGWindowLayer as String] as? Int ?? 0
+            guard layer == 0, let bounds = window[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
+            let width = bounds["Width"] ?? 0
+            let height = bounds["Height"] ?? 0
+            let rect = NSRect(
+                x: bounds["X"] ?? 0,
+                y: primary.frame.maxY - (bounds["Y"] ?? 0) - height,
+                width: width,
+                height: height
+            )
+            if abs(rect.width - display.width) < 8, abs(rect.height - display.height) < 8,
+               abs(rect.minX - display.minX) < 8, abs(rect.minY - display.minY) < 8 {
+                return true
+            }
+        }
+        return false
     }
 
     private func updateClickThrough(_ point: NSPoint) {
@@ -163,6 +211,13 @@ final class IslandController {
             let dx = event.scrollingDeltaX
             MainActor.assumeIsolated { _ = self?.swipeIsland(deltaY: dy, deltaX: dx) }
         }) { monitors.append(globalScroll) }
+        let space = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyFullscreen() }
+        }
+        let active = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyFullscreen() }
+        }
+        menuObservers.append(contentsOf: [space, active])
 
         if let up = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: { [weak self] _ in
             MainActor.assumeIsolated { self?.dragEnded() }
@@ -192,8 +247,11 @@ final class IslandController {
 
     /// Two-finger swipe over the island: up collapses, down expands.
     private func swipeIsland(deltaY: CGFloat, deltaX: CGFloat) -> Bool {
+        guard !hiddenForFullscreen else { return false }
         guard hoverRect.contains(NSEvent.mouseLocation) else { return false }
         guard abs(deltaY) > 10, abs(deltaY) > abs(deltaX) * 1.2 else { return false }
+        // A list scroll in Clipboard is the same gesture as swipe-up. Leave that scroll alone.
+        if deltaY < 0, model.isExpanded, model.tab == .clipboard { return false }
         if deltaY < 0 {
             guard model.isExpanded, !model.pinned, !model.menuTracking else { return false }
             model.collapse()
@@ -272,6 +330,12 @@ final class IslandController {
 
     private func pointerMoved(dragging: Bool) {
         let point = NSEvent.mouseLocation
+        if let screen, point.y > screen.frame.maxY - 80 { applyFullscreen() }
+        if hiddenForFullscreen {
+            openWork?.cancel()
+            openWork = nil
+            return
+        }
         if model.prefs.followPointerDisplay, !model.isExpanded, let screen, !NSMouseInRect(point, screen.frame, false) {
             place()
         }
