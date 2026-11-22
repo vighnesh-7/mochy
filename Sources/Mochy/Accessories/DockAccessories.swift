@@ -190,6 +190,7 @@ struct GlassChip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled()
         .help(label)
         .accessibilityLabel(label)
     }
@@ -473,6 +474,7 @@ final class AccessoryChrome {
         }
         let size = NSSize(width: 304, height: 236)
         let panel = reuse(&popover, size: size)
+        (panel as? AccessoryPanel)?.acceptsKey = true
         panel.level = .popUpMenu
         switch kind {
         case .todo:
@@ -511,10 +513,25 @@ final class AccessoryChrome {
     private func dismissPopover() {
         armOutside?.cancel()
         armOutside = nil
+        (popover as? AccessoryPanel)?.acceptsKey = false
+        popover?.makeFirstResponder(nil)
         popover?.orderOut(nil)
+        releaseShortcutFocus()
         model.todo.commitCompleted()
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
         outsideMonitor = nil
+    }
+
+    /// The chip stays the key window after the card closes, so the blue focus ring remains and Space opens it again.
+    private func releaseShortcutFocus() {
+        for panel in [rightPanel, leftPanel] {
+            guard let panel else { continue }
+            (panel as? AccessoryPanel)?.acceptsKey = false
+            panel.makeFirstResponder(nil)
+            guard panel.isKeyWindow else { continue }
+            panel.orderOut(nil)
+            panel.orderFrontRegardless()
+        }
     }
 
     private func installOutside() {
@@ -577,15 +594,10 @@ final class AccessoryChrome {
 }
 
 private final class AccessoryPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    /// Only the open card takes the keyboard. A shortcut chip that stays key keeps a blue ring and Space reopens it.
+    var acceptsKey = false
+    override var canBecomeKey: Bool { acceptsKey }
     override var canBecomeMain: Bool { false }
-
-    override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown || event.type == .rightMouseDown {
-            makeKey()
-        }
-        super.sendEvent(event)
-    }
 }
 
 private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {

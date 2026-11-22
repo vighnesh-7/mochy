@@ -257,7 +257,7 @@ private struct BehaviorPane: View {
                 PrefSlider(title: "Cursor on the Island", value: $model.prefs.idleTimeout, range: 0 ... 120, step: 5) { value in
                     value == 0 ? "Never" : "\(Int(value)) s"
                 }
-                PrefSlider(title: "Cursor off the Island", value: $model.prefs.idleTimeoutAway, range: 0 ... 120, step: 5) { value in
+                PrefSlider(title: "Cursor off the Island", value: $model.prefs.idleTimeoutAway, range: 0 ... 120, step: 1) { value in
                     value == 0 ? "Use Collapse Delay" : "\(Int(value)) s"
                 }
             } header: {

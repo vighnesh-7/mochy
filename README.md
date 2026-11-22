@@ -9,11 +9,7 @@
       &nbsp;&nbsp;&nbsp;&nbsp;A notch utility for macOS 14 and later. It sits in the camera housing and opens into a panel for what's playing, the calendar, files, clipboard history, to-dos, and timers.
     </td>
   </tr>
-</table> 
-
-Each launch from quit writes “hello” across a black card the size of the island, in Macintosh Skeletal, then settles into the pill.
-
-![Hello](docs/images/welcome.png)
+</table>
 
 ## Island
 

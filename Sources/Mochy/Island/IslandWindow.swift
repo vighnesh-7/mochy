@@ -46,7 +46,8 @@ final class IslandController {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        // fullScreenAuxiliary would put the island on a fullscreen space. Leave it off so a fullscreen app keeps the camera area.
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.isMovable = false
         panel.becomesKeyOnlyIfNeeded = true
@@ -137,23 +138,35 @@ final class IslandController {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
         let display = screen.frame
         let primary = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens[0]
+        // Desktop, menu bar, and wallpaper windows reach the top of the display. Only a normal app window counts.
+        let systemOwners: Set<String> = [
+            "Dock", "Mochy", "Control Center", "Notification Center", "Window Server",
+            "WindowManager", "SystemUIServer", "Spotlight", "Wallpaper", "ControlCenter"
+        ]
         for window in list {
             let owner = window[kCGWindowOwnerName as String] as? String ?? ""
-            if ["Dock", "Window Server", "Mochy", "Control Center", "Notification Center", "WindowManager"].contains(owner) { continue }
-            let layer = window[kCGWindowLayer as String] as? Int ?? 0
-            guard layer == 0, let bounds = window[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
-            let width = bounds["Width"] ?? 0
-            let height = bounds["Height"] ?? 0
+            if systemOwners.contains(owner) { continue }
+            let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+            if layer != 0 { continue }
+            let alpha = (window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+            if alpha < 0.05 { continue }
+            guard let bounds = window[kCGWindowBounds as String] as? [String: Any] else { continue }
+            func amount(_ key: String) -> CGFloat {
+                (bounds[key] as? NSNumber)?.doubleValue ?? 0
+            }
+            let width = amount("Width")
+            let height = amount("Height")
             let rect = NSRect(
-                x: bounds["X"] ?? 0,
-                y: primary.frame.maxY - (bounds["Y"] ?? 0) - height,
+                x: amount("X"),
+                y: primary.frame.maxY - amount("Y") - height,
                 width: width,
                 height: height
             )
-            if abs(rect.width - display.width) < 8, abs(rect.height - display.height) < 8,
-               abs(rect.minX - display.minX) < 8, abs(rect.minY - display.minY) < 8 {
-                return true
-            }
+            // A real fullscreen window matches the display. A zoomed window still stops under the menu bar.
+            let onThisDisplay = abs(rect.midX - display.midX) < 24 && abs(rect.midY - display.midY) < 24
+            let fullWidth = abs(rect.width - display.width) < 12
+            let fullHeight = abs(rect.height - display.height) < 12
+            if onThisDisplay && fullWidth && fullHeight { return true }
         }
         return false
     }
@@ -258,7 +271,7 @@ final class IslandController {
             if model.prefs.hapticFeedback { hapticHover() }
             return true
         }
-        guard !model.isExpanded, !model.welcoming else { return false }
+        guard !model.isExpanded else { return false }
         model.expand()
         if model.prefs.hapticFeedback { hapticHover() }
         return true
@@ -330,10 +343,11 @@ final class IslandController {
 
     private func pointerMoved(dragging: Bool) {
         let point = NSEvent.mouseLocation
-        if let screen, point.y > screen.frame.maxY - 80 { applyFullscreen() }
+        applyFullscreen()
         if hiddenForFullscreen {
             openWork?.cancel()
             openWork = nil
+            panel.ignoresMouseEvents = true
             return
         }
         if model.prefs.followPointerDisplay, !model.isExpanded, let screen, !NSMouseInRect(point, screen.frame, false) {
@@ -342,7 +356,6 @@ final class IslandController {
         updateClickThrough(point)
         if dragging { detectFileDrag(at: point) }
 
-        if model.welcoming { return }
         if hoverRect.contains(point) {
             cancelClose()
             if model.isExpanded {
@@ -352,6 +365,8 @@ final class IslandController {
                 let work = DispatchWorkItem { [weak self] in
                     guard let self else { return }
                     self.openWork = nil
+                    self.applyFullscreen()
+                    guard !self.hiddenForFullscreen else { return }
                     guard self.hoverRect.contains(NSEvent.mouseLocation), !self.model.isExpanded else { return }
                     self.pointerVisited = true
                     self.model.expand()
@@ -514,6 +529,11 @@ final class IslandController {
                 panel.orderOut(nil)
                 panel.orderFrontRegardless()
             }
+        }
+        if hiddenForFullscreen {
+            panel.ignoresMouseEvents = true
+            panel.orderOut(nil)
+            return
         }
         updateClickThrough(NSEvent.mouseLocation)
     }

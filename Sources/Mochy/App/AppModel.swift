@@ -62,8 +62,6 @@ final class AppModel: ObservableObject {
     }
 
     @Published private(set) var isExpanded = false
-    /// The hello card shown once each time Mochy starts from a quit.
-    @Published var welcoming = true
     var openDockClipboard: (() -> Void)?
     @Published var tab: TabID = .home
     @Published var pinned = false
@@ -172,7 +170,7 @@ final class AppModel: ObservableObject {
     static let expandedContentBottom: CGFloat = 4
 
     var islandBodySize: CGSize {
-        if isExpanded || welcoming {
+        if isExpanded {
             return CGSize(
                 width: prefs.panelSize.width + CGFloat(prefs.activityWidthExtra),
                 height: headerHeight

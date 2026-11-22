@@ -12,9 +12,7 @@ struct IslandRoot: View {
 
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                if model.welcoming {
-                    WelcomeIsland().transition(.opacity)
-                } else if model.isExpanded {
+                if model.isExpanded {
                     ExpandedIsland().transition(glide)
                 } else {
                     CollapsedIsland().transition(.opacity.animation(.easeOut(duration: 0.12)))
@@ -23,9 +21,7 @@ struct IslandRoot: View {
             .frame(width: size.width, height: size.height, alignment: .top)
             .padding(.horizontal, radii.top)
             .background {
-                if model.welcoming {
-                    shape.fill(Color.black)
-                } else if model.prefs.glassSurface {
+                if model.prefs.glassSurface {
                     VisualEffect(material: model.prefs.translucency.material)
                         .mask(shape)
                     shape.fill(model.prefs.translucency.fill.opacity(0.55))
@@ -38,7 +34,7 @@ struct IslandRoot: View {
             .shadow(color: .black.opacity(model.isExpanded ? 0.5 : 0), radius: 20, y: 10)
             .environment(\.clickHaptic, model.prefs.hapticOnClick)
             .onTapGesture {
-                guard !model.isExpanded, !model.welcoming else { return }
+                guard !model.isExpanded else { return }
                 if model.prefs.hapticOnClick { hapticClick() }
                 model.expand()
             }
@@ -56,7 +52,6 @@ struct IslandRoot: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
         .animation(Island.spring(reduceMotion), value: model.isExpanded)
-        .animation(Island.spring(reduceMotion), value: model.welcoming)
         .animation(Island.spring(reduceMotion), value: model.activity)
         .animation(Island.spring(reduceMotion), value: model.alert)
         .animation(Island.spring(reduceMotion), value: model.prefs.panelSize)

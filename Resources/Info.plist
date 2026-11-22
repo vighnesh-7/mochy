@@ -10,8 +10,6 @@
 	<string>Mochy</string>
 	<key>CFBundleIconFile</key>
 	<string>Mochy</string>
-	<key>ATSApplicationFontsPath</key>
-	<string>Fonts</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.mochy.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>

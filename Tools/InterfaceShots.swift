@@ -1,5 +1,4 @@
 import AppKit
-import CoreText
 import SwiftUI
 
 /// Renders the island and settings panes for the README. Not part of Mochy.app.
@@ -13,11 +12,8 @@ enum InterfaceShots {
         if let icon = NSImage(contentsOf: URL(fileURLWithPath: "Resources/Mochy.icns")) {
             NSApp.applicationIconImage = icon
         }
-        let font = URL(fileURLWithPath: "Resources/Fonts/MacintoshSkeletalFilled.otf")
-        CTFontManagerRegisterFontsForURL(font as CFURL, .process, nil)
         let model = AppModel()
         if let screen = NSScreen.main { model.notch = NotchGeometry.of(screen) }
-        model.welcoming = false
         model.expand(tab: .home)
         model.prefs.homeCards = [.nowPlaying, .todo, .controls, .battery]
 
@@ -30,6 +26,5 @@ enum InterfaceShots {
             print("wrote \(name)")
         }
 
-        png("welcome.png", WelcomeIsland(shown: 6).background(Color.black), size: CGSize(width: 900, height: 260))
     }
 }

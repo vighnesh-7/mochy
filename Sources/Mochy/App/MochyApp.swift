@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import CoreText
 import SwiftUI
 
 @main
@@ -28,9 +27,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.setActivationPolicy(.accessory)
         if let url = Bundle.main.url(forResource: "Mochy", withExtension: "icns"), let icon = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = icon
-        }
-        if let font = Bundle.main.url(forResource: "MacintoshSkeletalFilled", withExtension: "otf", subdirectory: "Fonts") {
-            CTFontManagerRegisterFontsForURL(font as CFURL, .process, nil)
         }
         model.openSettings = { [weak self] in self?.showSettings() }
 
