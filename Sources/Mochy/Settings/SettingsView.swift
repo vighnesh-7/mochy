@@ -257,13 +257,13 @@ private struct BehaviorPane: View {
                 PrefSlider(title: "Cursor on the Island", value: $model.prefs.idleTimeout, range: 0 ... 120, step: 5) { value in
                     value == 0 ? "Never" : "\(Int(value)) s"
                 }
-                PrefSlider(title: "Cursor off the Island", value: $model.prefs.idleTimeoutAway, range: 0 ... 120, step: 1) { value in
+                PrefSlider(title: "Cursor off the Island", value: $model.prefs.idleTimeoutAway, range: 0 ... 15, step: 1) { value in
                     value == 0 ? "Use Collapse Delay" : "\(Int(value)) s"
                 }
             } header: {
                 Text("Closing")
             } footer: {
-                Text("Auto Collapse closes the panel after the pointer leaves. Collapse Delay is that wait when Cursor off the Island is set to Use Collapse Delay. Cursor on the Island closes it while the pointer is still resting on it; Never keeps it open while hovered. Cursor off the Island is a longer wait after the pointer leaves.")
+                Text("Auto Collapse closes the panel after the pointer leaves. Collapse Delay is that wait when Cursor off the Island is set to Use Collapse Delay. Cursor on the Island closes it while the pointer is still resting on it; Never keeps it open while hovered. Cursor off the Island waits up to 15 seconds after the pointer leaves.")
             }
 
             Section {

@@ -33,6 +33,9 @@ final class IslandController {
     private var screen: NSScreen?
     /// A fullscreen app owns the display, so the notch stays out of the way.
     private var hiddenForFullscreen = false
+    /// Window-list scans are expensive. Reuse the last answer until the pointer nears the notch or a space changes.
+    private var fullscreenCached = false
+    private var fullscreenChecked = Date.distantPast
 
     init(model: AppModel) {
         self.model = model
@@ -117,7 +120,8 @@ final class IslandController {
     }
 
     /// Fullscreen apps cover the display. The island stays hidden, and moving toward the camera does not open it.
-    private func applyFullscreen() {
+    private func applyFullscreen(refresh: Bool = false) {
+        if refresh { fullscreenChecked = .distantPast }
         let hide = screenIsFullscreen()
         if hide {
             hiddenForFullscreen = true
@@ -134,6 +138,16 @@ final class IslandController {
     }
 
     private func screenIsFullscreen() -> Bool {
+        let now = Date()
+        let nearTop = NSEvent.mouseLocation.y > (screen?.frame.maxY ?? 0) - 96
+        let limit: TimeInterval = hiddenForFullscreen ? 1.2 : (nearTop ? 0.7 : 6)
+        if now.timeIntervalSince(fullscreenChecked) < limit { return fullscreenCached }
+        fullscreenCached = measureFullscreen()
+        fullscreenChecked = now
+        return fullscreenCached
+    }
+
+    private func measureFullscreen() -> Bool {
         guard let screen else { return false }
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
         let display = screen.frame
@@ -225,10 +239,10 @@ final class IslandController {
             MainActor.assumeIsolated { _ = self?.swipeIsland(deltaY: dy, deltaX: dx) }
         }) { monitors.append(globalScroll) }
         let space = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applyFullscreen() }
+            MainActor.assumeIsolated { self?.applyFullscreen(refresh: true) }
         }
         let active = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applyFullscreen() }
+            MainActor.assumeIsolated { self?.applyFullscreen(refresh: true) }
         }
         menuObservers.append(contentsOf: [space, active])
 
@@ -357,6 +371,9 @@ final class IslandController {
         if dragging { detectFileDrag(at: point) }
 
         if hoverRect.contains(point) {
+            if model.alert?.persistsUntilHover == true {
+                model.dismissAlert()
+            }
             cancelClose()
             if model.isExpanded {
                 pointerVisited = true
@@ -365,7 +382,7 @@ final class IslandController {
                 let work = DispatchWorkItem { [weak self] in
                     guard let self else { return }
                     self.openWork = nil
-                    self.applyFullscreen()
+                    self.applyFullscreen(refresh: true)
                     guard !self.hiddenForFullscreen else { return }
                     guard self.hoverRect.contains(NSEvent.mouseLocation), !self.model.isExpanded else { return }
                     self.pointerVisited = true

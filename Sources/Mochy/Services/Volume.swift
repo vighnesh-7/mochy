@@ -41,9 +41,12 @@ final class VolumeMonitor: ObservableObject {
         attach()
         // Keyboard volume keys sometimes change the level without a property callback.
         // A short read keeps the island on the same number as the system HUD.
-        timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.read(announce: true) }
+        let timer = Timer(timeInterval: 1.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.read(announce: true) }
         }
+        timer.tolerance = 0.4
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     private func attach() {
@@ -102,9 +105,12 @@ final class BrightnessMonitor: ObservableObject {
     func start() {
         guard timer == nil else { return }
         read()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.read() }
+        let timer = Timer(timeInterval: 1.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.read() }
         }
+        timer.tolerance = 0.4
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     private func read() {

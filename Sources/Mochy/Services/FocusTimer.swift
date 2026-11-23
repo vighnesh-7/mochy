@@ -33,6 +33,8 @@ final class FocusTimer: ObservableObject {
     @Published private(set) var remaining: TimeInterval = 25 * 60
     @Published private(set) var total: TimeInterval = 25 * 60
     @Published private(set) var elapsed: TimeInterval = 0
+    /// Focus sessions of at least 25 minutes that ran to the end today, after 2:00 AM IST.
+    @Published private(set) var completedToday = 0
 
     var focusMinutes: Double = 25
     var shortBreakMinutes: Double = 5
@@ -45,6 +47,19 @@ final class FocusTimer: ObservableObject {
     private var anchor: Date?
     private var anchorValue: TimeInterval = 0
     private var ticker: Timer?
+    private var nextPomodoroReset = Date.distantFuture
+
+    private static let countKey = "mochy.pomodoro.completed"
+    private static let dayKey = "mochy.pomodoro.day"
+    private static let india: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Kolkata") ?? TimeZone(secondsFromGMT: 5 * 3600 + 1800) ?? .current
+        return calendar
+    }()
+
+    init() {
+        restorePomodoros()
+    }
 
     var isActive: Bool { isRunning || (mode != .stopwatch && remaining < total && remaining > 0) || (mode == .stopwatch && elapsed > 0) }
 
@@ -79,10 +94,10 @@ final class FocusTimer: ObservableObject {
         anchor = Date()
         anchorValue = mode == .stopwatch ? elapsed : remaining
         ticker?.invalidate()
-        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
         }
-        timer.tolerance = 0.05
+        timer.tolerance = 0.2
         RunLoop.main.add(timer, forMode: .common)
         ticker = timer
     }
@@ -174,9 +189,59 @@ final class FocusTimer: ObservableObject {
         }
     }
 
+    /// One date compare on the existing clock. The day rolls at 2:00 AM India time, not midnight.
+    func rollPomodoroDayIfNeeded(now: Date = Date()) {
+        guard now >= nextPomodoroReset else { return }
+        completedToday = 0
+        let defaults = UserDefaults.standard
+        defaults.set(0, forKey: Self.countKey)
+        defaults.set(Self.pomodoroDay(now), forKey: Self.dayKey)
+        nextPomodoroReset = Self.nextReset(after: now)
+    }
+
+    private func restorePomodoros() {
+        let now = Date()
+        let day = Self.pomodoroDay(now)
+        let defaults = UserDefaults.standard
+        if defaults.string(forKey: Self.dayKey) == day {
+            completedToday = defaults.integer(forKey: Self.countKey)
+        } else {
+            completedToday = 0
+            defaults.set(0, forKey: Self.countKey)
+            defaults.set(day, forKey: Self.dayKey)
+        }
+        nextPomodoroReset = Self.nextReset(after: now)
+    }
+
+    private func recordPomodoro() {
+        rollPomodoroDayIfNeeded()
+        completedToday += 1
+        let defaults = UserDefaults.standard
+        defaults.set(completedToday, forKey: Self.countKey)
+        defaults.set(Self.pomodoroDay(Date()), forKey: Self.dayKey)
+    }
+
+    /// The pomodoro day starts at 2:00 AM IST, so an early-morning session still belongs to the previous day.
+    private static func pomodoroDay(_ date: Date) -> String {
+        let shifted = date.addingTimeInterval(-2 * 3600)
+        let parts = india.dateComponents([.year, .month, .day], from: shifted)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+
+    private static func nextReset(after now: Date) -> Date {
+        var parts = india.dateComponents([.year, .month, .day], from: now)
+        parts.hour = 2
+        parts.minute = 0
+        parts.second = 0
+        let today = india.date(from: parts) ?? now
+        if today > now { return today }
+        return india.date(byAdding: .day, value: 1, to: today) ?? today.addingTimeInterval(86_400)
+    }
+
     private func advancePhase(announce: Bool) {
-        pause()
         let finished = phase
+        let finishedTotal = total
+        pause()
         if phase == .focus {
             phase = round % max(1, roundsBeforeLongBreak) == 0 ? .longBreak : .shortBreak
             setTotal((phase == .longBreak ? longBreakMinutes : shortBreakMinutes) * 60)
@@ -184,6 +249,9 @@ final class FocusTimer: ObservableObject {
             phase = .focus
             round += 1
             setTotal(focusMinutes * 60)
+        }
+        if announce, finished == .focus, finishedTotal >= 25 * 60 - 0.5 {
+            recordPomodoro()
         }
         if announce {
             let title = finished == .focus ? "Focus Session Done" : "Break Over"

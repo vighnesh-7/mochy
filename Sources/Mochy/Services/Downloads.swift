@@ -28,6 +28,8 @@ final class DownloadMonitor: ObservableObject {
     private var announced: Set<String> = []
     private var seeded = false
     private var timer: Timer?
+    private var pollInterval: TimeInterval = 0
+    private var folderStamp: [String: Date] = [:]
     private var volumeSubscribers: [String: Any] = [:]
     private var usbRoots: [String] = []
     private let folders = [
@@ -50,12 +52,7 @@ final class DownloadMonitor: ObservableObject {
             }
             subscribers.append(token)
         }
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.poll() }
-        }
-        timer.tolerance = 0.05
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        armPoll(2)
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(forName: NSWorkspace.didMountNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.refreshVolumes() }
@@ -92,6 +89,24 @@ final class DownloadMonitor: ObservableObject {
     private func track(_ progress: Progress, key: String) {
         published[key] = progress
         rebuild()
+        armPoll(0.6)
+    }
+
+    /// Idle scans wait on the folder's modification date. A live transfer checks file sizes more often.
+    private func armPoll(_ interval: TimeInterval) {
+        guard timer == nil || abs(interval - pollInterval) > 0.05 else { return }
+        pollInterval = interval
+        timer?.invalidate()
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
+        timer.tolerance = interval * 0.35
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private static func modified(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
     }
 
     private func untrack(_ key: String) {
@@ -108,6 +123,14 @@ final class DownloadMonitor: ObservableObject {
     }
 
     private func poll() {
+        let idle = published.isEmpty && partials.isEmpty && growing.isEmpty && fresh.isEmpty
+        if seeded && idle {
+            let changed = folders.contains { folderStamp[$0.path] != Self.modified($0) }
+            if !changed {
+                armPoll(2)
+                return
+            }
+        }
         var seenPartials: [String: Int64] = [:]
         var seenRegular: [String: Int64] = [:]
         for folder in folders {
@@ -129,7 +152,9 @@ final class DownloadMonitor: ObservableObject {
             regularSizes = seenRegular
             partials = seenPartials
             seeded = true
+            for folder in folders { folderStamp[folder.path] = Self.modified(folder) }
             rebuild()
+            armPoll(published.isEmpty && partials.isEmpty ? 2 : 0.6)
             return
         }
         for (path, _) in partials where seenPartials[path] == nil && published[path] == nil {
@@ -166,7 +191,10 @@ final class DownloadMonitor: ObservableObject {
         growing = nextGrowing
         partials = seenPartials
         regularSizes = seenRegular
+        for folder in folders { folderStamp[folder.path] = Self.modified(folder) }
         rebuild()
+        let busy = !published.isEmpty || !partials.isEmpty || !growing.isEmpty || !fresh.isEmpty
+        armPoll(busy ? 0.6 : 2)
     }
 
     private func finish(_ url: URL) {

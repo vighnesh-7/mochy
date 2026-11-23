@@ -55,10 +55,10 @@ final class BatteryMonitor: ObservableObject {
             CFRunLoopAddSource(CFRunLoopGetMain(), loop, .commonModes)
             source = loop
         }
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+        let timer = Timer(timeInterval: 20, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
         }
-        timer.tolerance = 0.2
+        timer.tolerance = 8
         RunLoop.main.add(timer, forMode: .common)
         ticker = timer
         NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in

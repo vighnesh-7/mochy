@@ -78,9 +78,12 @@ final class ClipboardService: ObservableObject {
         } else if let data = try? Data(contentsOf: pinnedURL), let pinned = try? JSONDecoder().decode([ClipItem].self, from: data) {
             items = pinned
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.poll() }
+        let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
         }
+        timer.tolerance = 0.5
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     var filtered: [ClipItem] {

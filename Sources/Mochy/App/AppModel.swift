@@ -41,6 +41,8 @@ struct IslandAlert: Identifiable, Equatable {
     var actionTitle: String?
     var action: AlertAction?
     var duration: TimeInterval = 4
+    /// Timer and pomodoro banners stay until the pointer reaches the island.
+    var persistsUntilHover = false
 }
 
 struct PaletteCommand: Identifiable {
@@ -104,6 +106,7 @@ final class AppModel: ObservableObject {
 
     private var bag = Set<AnyCancellable>()
     private var alertWork: DispatchWorkItem?
+    private let chimePlayer = ChimePlayer()
     private var alertedEvents = Set<String>()
     private var clock: Timer?
 
@@ -146,9 +149,12 @@ final class AppModel: ObservableObject {
         if prefs.screenshotsToShelf { screenshots.start() }
         bindEvents()
         registerShortcuts()
-        clock = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.everySecond() }
+        let clock = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.everySecond() }
         }
+        clock.tolerance = 0.45
+        RunLoop.main.add(clock, forMode: .common)
+        self.clock = clock
         recomputeActivity()
     }
 
@@ -263,6 +269,7 @@ final class AppModel: ObservableObject {
         guard !isExpanded else { return }
         alertWork?.cancel()
         alert = newAlert
+        guard !newAlert.persistsUntilHover else { return }
         let work = DispatchWorkItem { [weak self] in
             guard self?.alert?.id == newAlert.id else { return }
             self?.alert = nil
@@ -471,8 +478,8 @@ final class AppModel: ObservableObject {
 
         timer.onPhaseEnd = { [weak self] title, subtitle in
             guard let self else { return }
-            if self.prefs.timerSound { NSSound(named: "Glass")?.play() }
-            self.show(IslandAlert(symbol: "timer", tint: .orange, title: title, subtitle: subtitle, actionTitle: "Open", action: .showTab(.timer), duration: 6))
+            if self.prefs.timerSound { self.playTimerChime() }
+            self.show(IslandAlert(symbol: "timer", tint: .orange, title: title, subtitle: subtitle, actionTitle: "Open", action: .showTab(.timer), persistsUntilHover: true))
         }
 
         downloads.onFinished = { [weak self] url in
@@ -499,8 +506,14 @@ final class AppModel: ObservableObject {
     private func everySecond() {
         nowPlaying.expireArtworkIfNeeded()
         shelf.prune(lifetime: prefs.shelfLifetime)
+        timer.rollPomodoroDayIfNeeded()
         recomputeActivity()
         checkEventAlerts()
+    }
+
+    /// Three separate rings. The named system sound is one shared object, so replaying it only restarts the same chime.
+    private func playTimerChime() {
+        chimePlayer.play(times: 3)
     }
 
     private func checkEventAlerts() {
@@ -530,8 +543,6 @@ final class AppModel: ObservableObject {
         let next = resolveActivity()
         if next != activity {
             activity = next
-        } else if next == .timer || next == .download || next == .charging {
-            objectWillChange.send()
         }
     }
 
@@ -586,6 +597,49 @@ final class AppModel: ObservableObject {
         clipboard.copy(items[slot - 1])
         playPopSound()
         collapse()
+    }
+}
+
+/// Plays the Glass alert as separate rings. `NSSound(named:)` returns one shared sound, so a second play only restarts it.
+private final class ChimePlayer: NSObject, NSSoundDelegate {
+    private var remaining = 0
+    private var current: NSSound?
+    private var generation = 0
+
+    func play(times: Int) {
+        generation += 1
+        remaining = times
+        current?.stop()
+        current = nil
+        ring(generation)
+    }
+
+    private func ring(_ generation: Int) {
+        guard generation == self.generation, remaining > 0 else { return }
+        remaining -= 1
+        let url = URL(fileURLWithPath: "/System/Library/Sounds/Glass.aiff")
+        guard let sound = NSSound(contentsOf: url, byReference: false) else { return }
+        sound.delegate = self
+        current = sound
+        sound.play()
+        let gap = max(sound.duration, 1.65) + 0.2
+        DispatchQueue.main.asyncAfter(deadline: .now() + gap) { [weak self] in
+            self?.advance(generation, sound: sound)
+        }
+    }
+
+    func sound(_ sound: NSSound, didFinishPlaying finished: Bool) {
+        guard finished else { return }
+        let generation = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.advance(generation, sound: sound)
+        }
+    }
+
+    private func advance(_ generation: Int, sound: NSSound) {
+        guard generation == self.generation, current === sound else { return }
+        current = nil
+        ring(generation)
     }
 }
 

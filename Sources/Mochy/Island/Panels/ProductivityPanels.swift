@@ -496,21 +496,28 @@ struct TodoTitle: View {
 // MARK: Pomodoro
 
 struct TimerPanel: View {
-    @EnvironmentObject var model: AppModel
     @ObservedObject var timer: FocusTimer
 
     var body: some View {
         HStack(spacing: 18) {
-            ZStack {
-                Ring(progress: timer.mode == .stopwatch ? 0 : timer.progress, tint: tint, lineWidth: 6)
-                VStack(spacing: 0) {
-                    Text(timer.display).font(Island.numerals(26, weight: .bold)).foregroundStyle(Island.primary)
-                        .contentTransition(.numericText(countsDown: timer.mode != .stopwatch))
-                    Text(timer.mode == .pomodoro ? timer.phase.title : timer.mode.title)
-                        .font(.system(size: 11, weight: .medium)).foregroundStyle(tint)
+            Button {
+                timer.toggle()
+            } label: {
+                ZStack {
+                    Ring(progress: timer.mode == .stopwatch ? 0 : timer.progress, tint: tint, lineWidth: 6)
+                    VStack(spacing: 0) {
+                        Text(timer.display).font(Island.numerals(26, weight: .bold)).foregroundStyle(Island.primary)
+                            .contentTransition(.numericText(countsDown: timer.mode != .stopwatch))
+                        Text(timer.mode == .pomodoro ? timer.phase.title : timer.mode.title)
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(tint)
+                    }
                 }
+                .frame(width: 124, height: 124)
+                .contentShape(Circle())
             }
-            .frame(width: 124, height: 124)
+            .buttonStyle(.plain)
+            .help(timer.isRunning ? "Pause" : "Start")
+            .accessibilityLabel(timer.isRunning ? "Pause \(timer.mode.title)" : "Start \(timer.mode.title)")
             .animation(.linear(duration: 0.25), value: timer.progress)
 
             VStack(alignment: .leading, spacing: 12) {
@@ -534,34 +541,30 @@ struct TimerPanel: View {
                             ForEach([30, 45, 60], id: \.self) { minutes in
                                 countdownChip(minutes)
                             }
-                            Button("Focus") { timer.setCountdown(minutes: model.prefs.focusMinutes) }
-                                .buttonStyle(ChipStyle(selected: Int(timer.total / 60) == Int(model.prefs.focusMinutes)))
-                        }
-                    }
-                }
-
-                if timer.mode != .stopwatch {
-                    HStack(spacing: 4) {
-                        ForEach([15, 10, 5], id: \.self) { minutes in
-                            Button("+\(minutes)") { timer.adjust(minutes: Double(minutes)) }
-                                .buttonStyle(ChipStyle())
-                        }
-                        ForEach([-5, -10, -15], id: \.self) { minutes in
-                            Button("\(minutes)") { timer.adjust(minutes: Double(minutes)) }
-                                .buttonStyle(ChipStyle())
                         }
                     }
                 }
 
                 Spacer(minLength: 0)
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Button(timer.isRunning ? "Pause" : (timer.isActive ? "Resume" : "Start")) { timer.toggle() }
                         .buttonStyle(PillButtonStyle(tint: tint))
                         .keyboardShortcut(.space, modifiers: [])
                     IslandIconButton(symbol: "arrow.counterclockwise", label: "Reset") { timer.reset() }
+                    if timer.mode != .stopwatch {
+                        ForEach([15, 10, 5], id: \.self) { minutes in
+                            Button("+\(minutes)") { timer.adjust(minutes: Double(minutes)) }
+                                .buttonStyle(ChipStyle(fill: Color.green.opacity(0.32)))
+                        }
+                        ForEach([-5, -10, -15], id: \.self) { minutes in
+                            Button("\(minutes)") { timer.adjust(minutes: Double(minutes)) }
+                                .buttonStyle(ChipStyle(fill: Color.red.opacity(0.32)))
+                        }
+                    }
                     if timer.mode == .pomodoro {
                         IslandIconButton(symbol: "forward.end.fill", label: "Skip to Next Phase") { timer.skipPhase() }
                     }
+                    PomodoroCount(count: timer.completedToday)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -613,13 +616,31 @@ struct SegmentedChips<Value: Hashable>: View {
 
 struct ChipStyle: ButtonStyle {
     var selected = false
+    var fill: Color?
     func makeBody(configuration: Configuration) -> some View {
+        let resting = fill ?? Color.white.opacity(0.1)
+        let pressed = fill?.opacity(0.7) ?? Color.white.opacity(0.2)
         configuration.label
             .font(Island.numerals(11, weight: .semibold))
             .foregroundStyle(selected ? Color.black : Island.primary)
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 8)
             .frame(height: 24)
-            .background(Capsule().fill(selected ? Island.primary : Color.white.opacity(configuration.isPressed ? 0.2 : 0.1)))
+            .background(Capsule().fill(selected ? Island.primary : (configuration.isPressed ? pressed : resting)))
+    }
+}
+
+/// Today's finished 25-minute pomodoros. Not a button; the count clears after 2:00 AM IST.
+private struct PomodoroCount: View {
+    let count: Int
+
+    var body: some View {
+        Text("\(count)")
+            .font(Island.numerals(12, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: count > 9 ? 34 : 28, height: 28)
+            .background(Circle().fill(Color.blue.opacity(0.72)))
+            .allowsHitTesting(false)
+            .accessibilityLabel("\(count) pomodoros finished today")
     }
 }
 

@@ -574,6 +574,8 @@ extension Preferences {
         take(.closeDelay, &closeDelay)
         take(.idleTimeout, &idleTimeout)
         take(.idleTimeoutAway, &idleTimeoutAway)
+        if idleTimeoutAway < 0 { idleTimeoutAway = 0 }
+        if idleTimeoutAway > 15 { idleTimeoutAway = 15 }
         take(.openOnCurrentActivity, &openOnCurrentActivity)
         take(.defaultTab, &defaultTab)
         take(.islandScreen, &islandScreen)

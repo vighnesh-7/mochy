@@ -44,7 +44,7 @@ private struct ActivityEars: View {
             Artwork(image: model.nowPlaying.artwork, fallback: "music.note", tint: model.nowPlaying.accent)
                 .frame(width: model.notch.height - 10, height: model.notch.height - 10)
         case .timer:
-            TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack(spacing: 5) {
                     Ring(progress: timer.progress, tint: Island.focus, lineWidth: 2.5).frame(width: 14, height: 14)
                     Text(timer.display).font(Island.numerals(12)).foregroundStyle(Island.primary)
@@ -53,7 +53,7 @@ private struct ActivityEars: View {
                 }
             }
         case .download:
-            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
                 Image(systemName: downloadSymbol(downloads.primary?.kind))
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Island.info)
@@ -92,7 +92,7 @@ private struct ActivityEars: View {
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         case .download:
-            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
                 DownloadReadout(item: downloads.primary)
             }
             .foregroundStyle(Island.info)
