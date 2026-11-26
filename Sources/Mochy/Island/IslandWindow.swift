@@ -49,8 +49,8 @@ final class IslandController {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
-        // fullScreenAuxiliary would put the island on a fullscreen space. Leave it off so a fullscreen app keeps the camera area.
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        // fullScreenAuxiliary lets the panel follow every Space. A real fullscreen app still hides it below.
+        panel.collectionBehavior = Self.spaceBehavior
         panel.hidesOnDeactivate = false
         panel.isMovable = false
         panel.becomesKeyOnlyIfNeeded = true
@@ -87,10 +87,22 @@ final class IslandController {
         let frame = target.frame
         panel.setFrame(NSRect(x: frame.midX - Self.canvas.width / 2, y: frame.maxY - Self.canvas.height, width: Self.canvas.width, height: Self.canvas.height), display: true)
         applyFullscreen()
-        if !hiddenForFullscreen {
-            panel.orderFrontRegardless()
-            updateClickThrough(NSEvent.mouseLocation)
+        if !hiddenForFullscreen { showOnActiveSpace() }
+    }
+
+    /// Joining every Space is not enough after the panel has been ordered out. Move it onto the Space now showing, then join the rest again.
+    private static let spaceBehavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+
+    private func showOnActiveSpace() {
+        guard !hiddenForFullscreen else {
+            panel.ignoresMouseEvents = true
+            panel.orderOut(nil)
+            return
         }
+        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .stationary]
+        panel.orderFrontRegardless()
+        panel.collectionBehavior = Self.spaceBehavior
+        updateClickThrough(NSEvent.mouseLocation)
     }
 
     private func chooseScreen() -> NSScreen {
@@ -119,6 +131,14 @@ final class IslandController {
         return NSRect(x: rect.minX - 10, y: rect.minY - 6, width: rect.width + 20, height: rect.height + 6)
     }
 
+    /// Where a hover may open the island. An alert hangs below the notch; that banner is for its own buttons.
+    private var openHoverRect: NSRect {
+        guard !model.isExpanded, model.alert != nil, let frame = screen?.frame else { return hoverRect }
+        let height = max(model.notch.height, 22)
+        let rect = islandRect
+        return NSRect(x: rect.minX, y: frame.maxY - height, width: rect.width, height: height)
+    }
+
     /// Fullscreen apps cover the display. The island stays hidden, and moving toward the camera does not open it.
     private func applyFullscreen(refresh: Bool = false) {
         if refresh { fullscreenChecked = .distantPast }
@@ -132,8 +152,7 @@ final class IslandController {
             panel.orderOut(nil)
         } else if hiddenForFullscreen {
             hiddenForFullscreen = false
-            panel.orderFrontRegardless()
-            updateClickThrough(NSEvent.mouseLocation)
+            showOnActiveSpace()
         }
     }
 
@@ -239,7 +258,10 @@ final class IslandController {
             MainActor.assumeIsolated { _ = self?.swipeIsland(deltaY: dy, deltaX: dx) }
         }) { monitors.append(globalScroll) }
         let space = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applyFullscreen(refresh: true) }
+            MainActor.assumeIsolated {
+                self?.applyFullscreen(refresh: true)
+                self?.showOnActiveSpace()
+            }
         }
         let active = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.applyFullscreen(refresh: true) }
@@ -370,28 +392,31 @@ final class IslandController {
         updateClickThrough(point)
         if dragging { detectFileDrag(at: point) }
 
-        if hoverRect.contains(point) {
-            if model.alert?.persistsUntilHover == true {
-                model.dismissAlert()
-            }
+        if openHoverRect.contains(point), model.alert?.persistsUntilHover == true {
+            model.dismissAlert()
+        }
+        if model.isExpanded, hoverRect.contains(point) {
             cancelClose()
-            if model.isExpanded {
-                pointerVisited = true
-                resetIdleTimer()
-            } else if model.prefs.openOnHover, !dragging, openWork == nil {
-                let work = DispatchWorkItem { [weak self] in
-                    guard let self else { return }
-                    self.openWork = nil
-                    self.applyFullscreen(refresh: true)
-                    guard !self.hiddenForFullscreen else { return }
-                    guard self.hoverRect.contains(NSEvent.mouseLocation), !self.model.isExpanded else { return }
-                    self.pointerVisited = true
-                    self.model.expand()
-                    if self.model.prefs.hapticFeedback { hapticHover() }
-                }
-                openWork = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + model.prefs.hoverDelay, execute: work)
+            pointerVisited = true
+            resetIdleTimer()
+        } else if openHoverRect.contains(point), model.prefs.openOnHover, !dragging, openWork == nil {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.openWork = nil
+                self.applyFullscreen(refresh: true)
+                guard !self.hiddenForFullscreen else { return }
+                guard self.openHoverRect.contains(NSEvent.mouseLocation), !self.model.isExpanded else { return }
+                self.pointerVisited = true
+                self.model.expand()
+                if self.model.prefs.hapticFeedback { hapticHover() }
             }
+            openWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + model.prefs.hoverDelay, execute: work)
+        } else if hoverRect.contains(point) {
+            // The pointer is on the alert banner. Keep Reveal and Dismiss clickable.
+            openWork?.cancel()
+            openWork = nil
+            cancelClose()
         } else if menuWindowOpen() {
             model.menuTracking = true
             cancelClose()
@@ -531,6 +556,7 @@ final class IslandController {
         openWork?.cancel()
         openWork = nil
         if expanded {
+            showOnActiveSpace()
             if model.wantsKeyboard || model.tab == .clipboard {
                 rememberFrontApp()
                 panel.makeKey()
@@ -542,9 +568,9 @@ final class IslandController {
             idleWork?.cancel()
             idleWork = nil
             if panel.isKeyWindow {
-                // Hand the keyboard back to whatever app was in front without activating Mochy.
+                // Hand the keyboard back without activating Mochy, then attach the panel to the Space now showing.
                 panel.orderOut(nil)
-                panel.orderFrontRegardless()
+                showOnActiveSpace()
             }
         }
         if hiddenForFullscreen {

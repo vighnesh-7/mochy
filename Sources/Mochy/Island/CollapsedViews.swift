@@ -27,14 +27,15 @@ private struct ActivityEars: View {
     @ObservedObject var battery: BatteryMonitor
 
     var body: some View {
+        let scale = model.closedPillFactor
         HStack(spacing: 0) {
             leading.frame(width: model.earWidth(activity), alignment: .leading)
-            Spacer(minLength: model.notch.width)
+            Spacer(minLength: model.notch.width * scale)
             trailing.frame(width: model.earWidth(activity), alignment: .trailing)
         }
         .frame(height: max(22, model.notch.height + CGFloat(model.prefs.activityHeightExtra)))
-        .padding(.leading, 12)
-        .padding(.trailing, 18)
+        .padding(.leading, 12 * scale)
+        .padding(.trailing, 18 * scale)
         .foregroundStyle(Island.primary)
     }
 

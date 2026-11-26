@@ -188,13 +188,18 @@ final class AppModel: ObservableObject {
         if alert != nil {
             return CGSize(width: max(notch.width + 280, 500), height: notch.height + 62)
         }
-        let scale = CGFloat(max(0.8, min(prefs.closedPillScale, 1.4)))
+        let scale = closedPillFactor
         if let activity {
-            let extra = CGFloat(prefs.activityWidthExtra)
             let height = max(22, notch.height + CGFloat(prefs.activityHeightExtra))
-            return CGSize(width: notch.width * scale + 2 * (earWidth(activity) + extra), height: height)
+            let sidePadding = (12 + 18) * scale
+            return CGSize(width: sidePadding + notch.width * scale + 2 * earWidth(activity), height: height)
         }
         return CGSize(width: notch.width * scale, height: notch.height * scale)
+    }
+
+    /// Closed-pill slider. The center gap and the side padding both use this, so the ears move in with the background.
+    var closedPillFactor: CGFloat {
+        CGFloat(max(0.8, min(prefs.closedPillScale, 1.4)))
     }
 
     var cornerRadii: (top: CGFloat, bottom: CGFloat) {

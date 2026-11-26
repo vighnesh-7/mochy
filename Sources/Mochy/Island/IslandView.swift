@@ -33,10 +33,16 @@ struct IslandRoot: View {
             .contentShape(shape)
             .shadow(color: .black.opacity(model.isExpanded ? 0.5 : 0), radius: 20, y: 10)
             .environment(\.clickHaptic, model.prefs.hapticOnClick)
-            .onTapGesture {
-                guard !model.isExpanded else { return }
-                if model.prefs.hapticOnClick { hapticClick() }
-                model.expand()
+            .overlay(alignment: .top) {
+                if !model.isExpanded {
+                    Color.clear
+                        .frame(height: model.alert == nil ? size.height : model.notch.height)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if model.prefs.hapticOnClick { hapticClick() }
+                            model.expand()
+                        }
+                }
             }
             .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
                 loadFileURLs(providers) { model.addToShelf($0) }
