@@ -486,6 +486,9 @@ struct TodoTitle: View {
                 label
             }
             .buttonStyle(.plain)
+            .onHover { inside in
+                if inside { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+            }
             .help(title)
         } else {
             label

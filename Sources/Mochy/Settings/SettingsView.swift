@@ -28,8 +28,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .todo: "To-Do"
         case .pomodoro: "Pomodoro"
         case .caffeine: "Caffeine"
-        case .developer: "Developer"
-        case .about: "About Mochy"
+        case .developer: "API"
+        case .about: "About"
         }
     }
 
@@ -1028,6 +1028,11 @@ private struct DeveloperPane: View {
 }
 
 struct AboutPane: View {
+    private static let githubMark: NSImage? = {
+        guard let url = Bundle.main.url(forResource: "GitHubMark", withExtension: "png") else { return nil }
+        return NSImage(contentsOf: url)
+    }()
+
     var body: some View {
         Form {
             Section {
@@ -1042,10 +1047,31 @@ struct AboutPane: View {
                 .padding(.vertical, 4)
             }
             Section("Developer Details") {
-                LabeledContent("Developer", value: "Vighnesh")
-                Link("github.com/vighnesh-7", destination: URL(string: "https://github.com/vighnesh-7")!)
+                LabeledContent("Developer") {
+                    HStack(spacing: 8) {
+                        Text("Vighnesh")
+                        if let mark = Self.githubMark {
+                            Link(destination: URL(string: "https://github.com/vighnesh-7")!) {
+                                Image(nsImage: mark)
+                                    .resizable()
+                                    .interpolation(.high)
+                                    .frame(width: 22, height: 22)
+                                    .clipShape(Circle())
+                                    .contentShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .onHover { inside in
+                                if inside { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+                            }
+                            .help("github.com/vighnesh-7")
+                            .accessibilityLabel("Vighnesh on GitHub")
+                        }
+                    }
+                }
                 Link("Open sourced at github.com/vighnesh-7/mochy", destination: URL(string: "https://github.com/vighnesh-7/mochy")!)
-                Link("vighnesh-vangari.vercel.app", destination: URL(string: "https://vighnesh-vangari.vercel.app/")!)
+                    .onHover { inside in
+                        if inside { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+                    }
             }
             Section("Good to Know") {
                 Text("Mochy doesn’t replace the system volume and brightness indicators.")

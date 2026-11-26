@@ -518,7 +518,7 @@ struct Preferences: Codable, Equatable {
         uniqueKeysWithValues: ShortcutID.allCases.compactMap { id in id.defaultCombo.map { (id, $0) } }
     )
 
-    // Developer
+    // API
     var apiEnabled = false
     var apiPort = 9999
     var apiToken = Preferences.newToken()
