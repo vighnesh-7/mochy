@@ -93,6 +93,52 @@ enum FileTools {
         QuickLook.shared.show(url)
     }
 
+    /// Closes the preview. Control-W and Command-W never reach it otherwise, because it is not the island window.
+    static func closeQuickLook() -> Bool {
+        guard let panel = QLPreviewPanel.shared(), panel.isVisible else { return false }
+        panel.orderOut(nil)
+        return true
+    }
+
+    /// A copy whose filename is the real name. Item-provider drags rename the file to
+    /// `.com.apple.Foundation.NSItemProvider.*`, and WhatsApp refuses that name.
+    static func stageForDrag(_ url: URL) -> URL {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MochyDrag", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let name = visibleFileName(url.lastPathComponent)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let dest = folder.appendingPathComponent(name)
+            try FileManager.default.copyItem(at: url, to: dest)
+            return dest
+        } catch {
+            return url
+        }
+    }
+
+    private static func visibleFileName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = trimmed.isEmpty ? "File" : trimmed
+        return base.hasPrefix(".") ? "File" + base : base
+    }
+
+    /// Copies the shelf file into Downloads, keeping its name. A name already there gets a numeric suffix.
+    static func copyToDownloads(_ url: URL) throws -> URL {
+        let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        let stem = url.deletingPathExtension().lastPathComponent
+        let ext = url.pathExtension
+        var dest = folder.appendingPathComponent(url.lastPathComponent)
+        var count = 2
+        while FileManager.default.fileExists(atPath: dest.path) {
+            let name = ext.isEmpty ? "\(stem)-\(count)" : "\(stem)-\(count).\(ext)"
+            dest = folder.appendingPathComponent(name)
+            count += 1
+        }
+        try FileManager.default.copyItem(at: url, to: dest)
+        return dest
+    }
+
     // MARK: Decode
 
     private static func load(_ url: URL) -> CGImage? {
@@ -198,16 +244,50 @@ enum FileTools {
 private final class QuickLook: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     static let shared = QuickLook()
     private var url: URL?
+    private let host = QuickLookHost()
 
     func show(_ url: URL) {
-        self.url = url
-        if let panel = QLPreviewPanel.shared() {
-            panel.dataSource = self
-            panel.delegate = self
-            panel.makeKeyAndOrderFront(nil)
-        }
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        self.url = url.standardizedFileURL
+        NSApp.activate(ignoringOtherApps: true)
+        host.orderFrontRegardless()
+        host.makeKey()
+        guard let panel = QLPreviewPanel.shared() else { return }
+        panel.updateController()
+        panel.dataSource = self
+        panel.delegate = self
+        panel.reloadData()
+        panel.makeKeyAndOrderFront(nil)
     }
 
     func numberOfPreviewItems(in _: QLPreviewPanel!) -> Int { url == nil ? 0 : 1 }
     func previewPanel(_: QLPreviewPanel!, previewItemAt _: Int) -> QLPreviewItem! { url as NSURL? }
+}
+
+/// Quick Look only appears when the key window accepts it. An agent app has no document window, so this host does.
+private final class QuickLookHost: NSWindow {
+    init() {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        isReleasedWhenClosed = false
+        alphaValue = 0
+        ignoresMouseEvents = true
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = QuickLook.shared
+        panel.delegate = QuickLook.shared
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
 }

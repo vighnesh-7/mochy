@@ -142,6 +142,16 @@ private struct ShelfTile: View {
         .padding(.top, 16)
         .padding(.bottom, 8)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hovering ? Color.white.opacity(0.1) : .clear))
+        .overlay {
+            ShelfFileDrag(
+                url: item.url,
+                onQuickLook: { FileTools.quickLook(item.url) },
+                onOpen: { model.shelf.open(item) },
+                onReveal: { model.shelf.reveal(item) },
+                onAirDrop: { model.airDrop([item.url]) },
+                onRemove: { model.shelf.remove(item) }
+            )
+        }
         .overlay(alignment: .topTrailing) {
             if hovering {
                 Button { model.shelf.remove(item) } label: {
@@ -160,6 +170,7 @@ private struct ShelfTile: View {
         .overlay(alignment: .bottomTrailing) {
             Menu {
                 Button("Quick Look", systemImage: "eye") { FileTools.quickLook(item.url) }
+                Button("Download", systemImage: "square.and.arrow.down") { download() }
                 Divider()
                 Menu("Convert to") {
                     Button("JPEG") { convert(.jpeg) }
@@ -190,15 +201,6 @@ private struct ShelfTile: View {
             .help("More")
         }
         .onHover { hovering = $0 }
-        .onDrag { NSItemProvider(contentsOf: item.url) ?? NSItemProvider() }
-        .onTapGesture(count: 2) { model.shelf.open(item) }
-        .contextMenu {
-            Button("Open") { model.shelf.open(item) }
-            Button("Show in Finder") { model.shelf.reveal(item) }
-            Button("AirDrop") { model.airDrop([item.url]) }
-            Divider()
-            Button("Remove from Shelf") { model.shelf.remove(item) }
-        }
         .help(item.name)
         .accessibilityLabel(item.name)
     }
@@ -221,12 +223,155 @@ private struct ShelfTile: View {
         }
     }
 
+    private func download() {
+        do {
+            let saved = try FileTools.copyToDownloads(item.url)
+            model.show(IslandAlert(
+                symbol: "arrow.down.circle.fill",
+                tint: .blue,
+                title: "Saved to Downloads",
+                subtitle: saved.lastPathComponent,
+                actionTitle: "Reveal",
+                action: .reveal(saved),
+                duration: 5
+            ))
+        } catch {
+            model.shelf.report("Couldn’t save \(item.name) to Downloads.")
+        }
+    }
+
     private func zip() {
         do {
             let url = try FileTools.zip([item.url])
             model.shelf.add([url])
         } catch {
             model.shelf.report(error.localizedDescription)
+        }
+    }
+}
+
+/// Writes the file URL the way Finder does, plus the older filename list WhatsApp still reads.
+private final class FileURLWriter: NSObject, NSPasteboardWriting {
+    let url: URL
+    init(_ url: URL) { self.url = url }
+
+    func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+        var types = (url as NSURL).writableTypes(for: pasteboard)
+        let names = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        if !types.contains(names) { types.append(names) }
+        return types
+    }
+
+    func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+        if type.rawValue == "NSFilenamesPboardType" { return [url.path] }
+        return (url as NSURL).pasteboardPropertyList(forType: type)
+    }
+}
+
+/// Drags the shelf file as a real file URL. SwiftUI's item provider renames it, and WhatsApp rejects that name.
+private struct ShelfFileDrag: NSViewRepresentable {
+    let url: URL
+    var onQuickLook: () -> Void
+    var onOpen: () -> Void
+    var onReveal: () -> Void
+    var onAirDrop: () -> Void
+    var onRemove: () -> Void
+
+    func makeNSView(context: Context) -> ShelfDragView {
+        let view = ShelfDragView()
+        view.apply(self)
+        return view
+    }
+
+    func updateNSView(_ view: ShelfDragView, context: Context) {
+        view.apply(self)
+    }
+}
+
+private final class ShelfDragView: NSView, NSDraggingSource {
+    var url: URL?
+    var onQuickLook: (() -> Void)?
+    var onOpen: (() -> Void)?
+    var onReveal: (() -> Void)?
+    var onAirDrop: (() -> Void)?
+    var onRemove: (() -> Void)?
+    private var origin: NSPoint?
+    private var didDrag = false
+    private var stagedFolder: URL?
+
+    func apply(_ source: ShelfFileDrag) {
+        url = source.url
+        onQuickLook = source.onQuickLook
+        onOpen = source.onOpen
+        onReveal = source.onReveal
+        onAirDrop = source.onAirDrop
+        onRemove = source.onRemove
+    }
+
+    override var isOpaque: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        origin = convert(event.locationInWindow, from: nil)
+        didDrag = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let url, let origin, !didDrag else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard hypot(point.x - origin.x, point.y - origin.y) > 5 else { return }
+        didDrag = true
+        let staged = FileTools.stageForDrag(url)
+        stagedFolder = staged.deletingLastPathComponent()
+        let item = NSDraggingItem(pasteboardWriter: FileURLWriter(staged))
+        let icon = NSWorkspace.shared.icon(forFile: staged.path)
+        icon.size = NSSize(width: 64, height: 64)
+        item.draggingFrame = NSRect(x: point.x - 32, y: point.y - 32, width: 64, height: 64)
+        item.imageComponentsProvider = {
+            let component = NSDraggingImageComponent(key: .icon)
+            component.contents = icon
+            component.frame = NSRect(origin: .zero, size: NSSize(width: 64, height: 64))
+            return [component]
+        }
+        let session = beginDraggingSession(with: [item], event: event, source: self)
+        session.draggingFormation = .none
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if !didDrag, event.clickCount >= 2 { onQuickLook?() }
+        didDrag = false
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func add(_ title: String, _ action: Selector) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        add("Open", #selector(openItem))
+        add("Show in Finder", #selector(revealItem))
+        add("AirDrop", #selector(airDropItem))
+        menu.addItem(.separator())
+        add("Remove from Shelf", #selector(removeItem))
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func openItem() { onOpen?() }
+    @objc private func revealItem() { onReveal?() }
+    @objc private func airDropItem() { onAirDrop?() }
+    @objc private func removeItem() { onRemove?() }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .copy
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        guard let folder = stagedFolder else { return }
+        stagedFolder = nil
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 120) {
+            try? FileManager.default.removeItem(at: folder)
         }
     }
 }

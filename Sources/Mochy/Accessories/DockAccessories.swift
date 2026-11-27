@@ -292,8 +292,18 @@ final class AccessoryChrome {
             .sink { [weak self] _ in self?.syncDock() }
             .store(in: &bag)
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53, let self, self.popover?.isVisible == true else { return event }
-            self.dismissPopover()
+            guard let self, self.popover?.isVisible == true else { return event }
+            if event.keyCode == 53 {
+                self.dismissPopover()
+                return nil
+            }
+            guard self.popoverKind == .clipboard else { return event }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard flags.isDisjoint(with: [.command, .control, .option, .shift]) else { return event }
+            guard let slot = Int(event.charactersIgnoringModifiers ?? ""), (1 ... 9).contains(slot) else { return event }
+            let items = self.model.clipboard.filtered
+            guard slot <= items.count else { return event }
+            self.pickClipboard(items[slot - 1])
             return nil
         }
         syncMenuBar()
@@ -461,6 +471,7 @@ final class AccessoryChrome {
     // MARK: Popover
 
     private enum Kind { case todo, clipboard }
+    private var popoverKind: Kind?
 
     private func togglePopover(_ kind: Kind, from item: NSStatusItem? = nil, anchor: NSPoint? = nil) {
         if popover?.isVisible == true {
@@ -474,6 +485,7 @@ final class AccessoryChrome {
         }
         let size = NSSize(width: 304, height: 236)
         let panel = reuse(&popover, size: size)
+        popoverKind = kind
         (panel as? AccessoryPanel)?.acceptsKey = true
         panel.level = .popUpMenu
         switch kind {
@@ -495,6 +507,7 @@ final class AccessoryChrome {
         }
         panel.orderFrontRegardless()
         panel.makeKey()
+        if kind == .clipboard { NSApp.activate(ignoringOtherApps: true) }
         installOutside()
     }
 
@@ -511,6 +524,7 @@ final class AccessoryChrome {
     }
 
     private func dismissPopover() {
+        popoverKind = nil
         armOutside?.cancel()
         armOutside = nil
         (popover as? AccessoryPanel)?.acceptsKey = false
@@ -520,6 +534,9 @@ final class AccessoryChrome {
         model.todo.commitCompleted()
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
         outsideMonitor = nil
+        if let front = model.previousFrontApp, front.bundleIdentifier != Bundle.main.bundleIdentifier {
+            front.activate()
+        }
     }
 
     /// The chip stays the key window after the card closes, so the blue focus ring remains and Space opens it again.

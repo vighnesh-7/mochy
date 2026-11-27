@@ -280,6 +280,10 @@ final class IslandController {
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let handled = MainActor.assumeIsolated {
                 if self.editingCommand(code: code, flags: flags) { return true }
+                let closePreview = code == 13
+                    && flags.subtracting([.command, .control]).isEmpty
+                    && (flags.contains(.control) || flags.contains(.command))
+                if closePreview, FileTools.closeQuickLook() { return true }
                 if code == 53, let number, self.escapePressed(inWindow: number) { return true }
                 if self.commandKey(code: code, characters: characters, flags: flags, window: number) { return true }
                 return self.snippetKey(characters, flags: flags, window: number)
